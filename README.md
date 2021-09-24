@@ -1,2 +1,2 @@
-# vit-unet
+# ViT-UNet
 ViT-UNet
