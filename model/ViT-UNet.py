@@ -85,9 +85,6 @@ class PatchEncoder(torch.nn.Module):
         # Layers
         if self.preprocessing == "conv":
             self.conv2d = torch.nn.Conv2d(3, 3, 3, padding = 'same')
-        self.Flatten = torch.nn.Flatten(start_dim = -3,
-                                        end_dim = -1,
-                                        )
         self.position_embedding = torch.nn.Embedding(num_embeddings=self.num_patches_final,
                                                      embedding_dim = 3*self.patch_size_final**2,
                                                      )
@@ -98,9 +95,9 @@ class PatchEncoder(torch.nn.Module):
         elif self.preprocessing == 'fourier':
             X = torch.fft.fft2(X).real
         patches = Patch(X, self.patch_size_final)
-        flat_patches = self.Flatten(patches)
+        flat_patches = torch.flatten(patches, -3, -1)
         encoded = flat_patches + self.position_embedding(self.positions)
-        encoded = Patch(Unpatch(Unflatten(encoded)), patch_size = self.patch_size)
+        encoded = torch.flatten(Patch(Unpatch(Unflatten(encoded)), patch_size = self.patch_size), -3, -1)
         return encoded
 
 
@@ -272,6 +269,7 @@ class SkipConnection(torch.nn.Module):
 class ViT_UNet(torch.nn.Module):
     def __init__(self,
                  depth:int,
+                 depth_te:int,
                  size_bottleneck:int,
                  preprocessing:str,
                  num_patches:int,
@@ -297,6 +295,7 @@ class ViT_UNet(torch.nn.Module):
             print('\tHidden dim. size:',hidden_dim//(2**i))
         # Parameters
         self.depth = depth
+        self.depth_te = depth_te
         self.size_bottleneck = size_bottleneck
         self.preprocessing = preprocessing
         self.num_patches = num_patches
@@ -314,17 +313,18 @@ class ViT_UNet(torch.nn.Module):
         for level in range(self.depth):
             exp_factor = 4**(level)
             exp_factor_hidden = 2**(level)
-            self.Encoders.append(
-                ReAttentionTransformerEncoder(self.num_patches*exp_factor,
-                                              self.projection_dim//exp_factor,
-                                              self.hidden_dim//exp_factor_hidden,
-                                              self.num_heads,
-                                              self.attn_drop,
-                                              self.proj_drop,
-                                              self.linear_drop,
-                                              self.dtype,
-                                              )
-            )
+            for _ in range(depth_te):
+                self.Encoders.append(
+                    ReAttentionTransformerEncoder(self.num_patches*exp_factor,
+                                                  self.projection_dim//exp_factor,
+                                                  self.hidden_dim//exp_factor_hidden,
+                                                  self.num_heads,
+                                                  self.attn_drop,
+                                                  self.proj_drop,
+                                                  self.linear_drop,
+                                                  self.dtype,
+                                                  )
+                )
         self.BottleNeck = torch.nn.ModuleList()
         for _ in range(self.size_bottleneck):
             exp_factor = 4**(self.depth)
@@ -346,17 +346,18 @@ class ViT_UNet(torch.nn.Module):
             exp_factor = 4**(self.depth-level)
             exp_factor_skip = 4**(self.depth-level-1)
             exp_factor_hidden = 2**(self.depth-level)
-            self.Decoders.append(
-                ReAttentionTransformerEncoder(self.num_patches*exp_factor,
-                                              self.projection_dim//exp_factor,
-                                              self.hidden_dim//exp_factor_hidden,
-                                              self.num_heads,
-                                              self.attn_drop,
-                                              self.proj_drop,
-                                              self.linear_drop,
-                                              self.dtype,
-                                              )
-            )
+            for _ in range(depth_te):
+                self.Decoders.append(
+                    ReAttentionTransformerEncoder(self.num_patches*exp_factor,
+                                                  self.projection_dim//exp_factor,
+                                                  self.hidden_dim//exp_factor_hidden,
+                                                  self.num_heads,
+                                                  self.attn_drop,
+                                                  self.proj_drop,
+                                                  self.linear_drop,
+                                                  self.dtype,
+                                                  )
+                )
             self.SkipConnections.append(
                 SkipConnection(dim = self.projection_dim//exp_factor_skip,
                                num_heads = self.num_heads,
@@ -380,31 +381,33 @@ class ViT_UNet(torch.nn.Module):
 
         # Encoders
         encoder_skip = []
-        print('Start encoding. Original shape:',X_patch.size())
+        #print('Start encoding. Original shape:',X_patch.size())
         for i, enc in enumerate(self.Encoders):
             X_patch = enc(X_patch)
-            encoder_skip.append(X_patch)
-            X_patch = DownSampling(X_patch)
-            print("\t Shape after step " + str(i+1) + " of encoding:",X_patch.size())
+            if (i+1)%self.depth_te==0:
+                encoder_skip.append(X_patch)
+                X_patch = DownSampling(X_patch)
+                #print("\t Shape after level " + str((i+1)//self.depth_te) + " of encoding:",X_patch.size())
         # Bottleneck
-        print('Start bottleneck')
+        #print('Start bottleneck')
         for i, bottle in enumerate(self.BottleNeck):
             X_patch = bottle(X_patch)
-            print("\t Shape after step " + str(i+1) + " of bottleneck:",X_patch.size())
+            #print("\t Shape after step " + str(i+1) + " of bottleneck:",X_patch.size())
         # Decoders
-        print('Start decoding')
+        #print('Start decoding')
         for i, dec in enumerate(self.Decoders):
-            print('\tStep',i+1)
+            #print('\tStep',i+1)
             X_patch = dec(X_patch)
-            X_patch = UpSampling(X_patch)
-            print("\t Shape after step " + str(i+1) + " of encoding:",X_patch.size())
-            print('\tSkip connection')
-            assert encoder_skip[self.depth-(i+1)].shape==X_patch.shape, f"enc and dec not same shape"
-            X_patch = self.SkipConnections[i](encoder_skip[self.depth-(i+1)], X_patch, X_patch)
+            if (i+1)%self.depth_te==0:
+                X_patch = UpSampling(X_patch)
+                #print("\t Shape after level " + str((i+1)//self.depth_te) + " of decoding:",X_patch.size())
+                #print('\tSkip connection')
+                assert encoder_skip[self.depth-((i+1)//self.depth_te)].shape==X_patch.shape, f"enc and dec not same shape"
+                X_patch = self.SkipConnections[(i-1)//self.depth_te](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
         
         # Output
         X_restored = Unpatch(Unflatten(X_patch)).reshape(batch_size, ch, h, w)
-        print('Final processing is: ' + self.preprocessing)
+        #print('Final processing is: ' + self.preprocessing)
         if self.preprocessing == 'conv':
             X_restored = self.conv2d(X_restored)
         elif self.preprocessing == 'fourier':
