@@ -1,4 +1,9 @@
 numpy
 torch
 torchvision
-itertools
+fire
+nibabel
+benatools
+scikit-build
+opencv-contrib-python
+ipykernel

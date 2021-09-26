@@ -4,7 +4,7 @@ import itertools
 
 
 # Auxiliary functions to create & undo patches
-def Patch(
+def patch(
     X:torch.Tensor,
     patch_size:int,
     ):
@@ -20,18 +20,18 @@ def Patch(
     patches = torch.stack(patch_list, dim = 1)
     return patches
 
-def Unflatten(
+def unflatten(
     flattened:torch.Tensor,
     ):
     bs, n, p = flattened.size()
     unflattened = torch.reshape(flattened, (bs, n, 3, int(np.sqrt(p/3)), int(np.sqrt(p/3))))
     return unflattened
 
-def Unpatch(
+def unpatch(
     patches:torch.Tensor,
     ):
     if len(patches.size()) < 5:
-        batch_size, num_patches, ch, h, w = Unflatten(patches).size()
+        batch_size, num_patches, ch, h, w = unflatten(patches).size()
     else:
         batch_size, num_patches, ch, h, w = patches.size()
     elem_per_axis = int(np.sqrt(num_patches))
@@ -41,19 +41,19 @@ def Unpatch(
 
 
 # Auxiliary methods to downsampling & upsampling
-def DownSampling(encoded_patches):
+def downsampling(encoded_patches):
     _, _, embeddings = encoded_patches.size()
     ch, h, w = 3, int(np.sqrt(embeddings/3)), int(np.sqrt(embeddings/3))
-    original_image = Unpatch(Unflatten(encoded_patches))
-    new_patches = Patch(original_image, patch_size = h//2)
+    original_image = unpatch(unflatten(encoded_patches))
+    new_patches = patch(original_image, patch_size = h//2)
     new_patches_flattened = torch.nn.Flatten(start_dim = -3, end_dim = -1).forward(new_patches)
     return new_patches_flattened
 
-def UpSampling(encoded_patches):
+def upsampling(encoded_patches):
     _, _, embeddings = encoded_patches.size()
     _, h, _ = 3, int(np.sqrt(embeddings/3)), int(np.sqrt(embeddings/3))
-    original_image = Unpatch(Unflatten(encoded_patches))
-    new_patches = Patch(original_image, patch_size = h*2)
+    original_image = unpatch(unflatten(encoded_patches))
+    new_patches = patch(original_image, patch_size = h*2)
     new_patches_flattened = torch.flatten(new_patches, start_dim = -3, end_dim = -1)
     return new_patches_flattened
 
@@ -94,10 +94,10 @@ class PatchEncoder(torch.nn.Module):
             X = self.conv2d(X)
         elif self.preprocessing == 'fourier':
             X = torch.fft.fft2(X).real
-        patches = Patch(X, self.patch_size_final)
+        patches = patch(X, self.patch_size_final)
         flat_patches = torch.flatten(patches, -3, -1)
         encoded = flat_patches + self.position_embedding(self.positions)
-        encoded = torch.flatten(Patch(Unpatch(Unflatten(encoded)), patch_size = self.patch_size), -3, -1)
+        encoded = torch.flatten(patch(unpatch(unflatten(encoded)), patch_size = self.patch_size), -3, -1)
         return encoded
 
 
@@ -156,9 +156,9 @@ class ReAttention(torch.nn.Module):
         self.proj_drop = torch.nn.Dropout(proj_drop)
     def forward(self, x, atten=None):
         B, N, C = x.shape
-        q = torch.flatten(torch.stack([self.qconv2d(y) for y in Unflatten(x)], dim = 0), -3,-1)
-        k = torch.flatten(torch.stack([self.kconv2d(y) for y in Unflatten(x)], dim = 0), -3,-1)
-        v = torch.flatten(torch.stack([self.vconv2d(y) for y in Unflatten(x)], dim = 0), -3,-1)
+        q = torch.flatten(torch.stack([self.qconv2d(y) for y in unflatten(x)], dim = 0), -3,-1)
+        k = torch.flatten(torch.stack([self.kconv2d(y) for y in unflatten(x)], dim = 0), -3,-1)
+        v = torch.flatten(torch.stack([self.vconv2d(y) for y in unflatten(x)], dim = 0), -3,-1)
         qkv = torch.cat([q,k,v], dim = -1).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         attn = (torch.matmul(q, k.transpose(-2, -1))) * self.scale
@@ -249,9 +249,9 @@ class SkipConnection(torch.nn.Module):
         assert q.shape==k.shape
         assert k.shape==v.shape
         B, N, C = q.shape
-        q = torch.flatten(torch.stack([self.qconv2d(y) for y in Unflatten(q)], dim = 0), -3,-1)
-        k = torch.flatten(torch.stack([self.kconv2d(y) for y in Unflatten(k)], dim = 0), -3,-1)
-        v = torch.flatten(torch.stack([self.vconv2d(y) for y in Unflatten(v)], dim = 0), -3,-1)
+        q = torch.flatten(torch.stack([self.qconv2d(y) for y in unflatten(q)], dim = 0), -3,-1)
+        k = torch.flatten(torch.stack([self.kconv2d(y) for y in unflatten(k)], dim = 0), -3,-1)
+        v = torch.flatten(torch.stack([self.vconv2d(y) for y in unflatten(v)], dim = 0), -3,-1)
         qkv = torch.cat([q,k,v], dim = -1).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
         attn = (torch.matmul(q,k.transpose(-2, -1))) * self.scale
@@ -386,7 +386,7 @@ class ViT_UNet(torch.nn.Module):
             X_patch = enc(X_patch)
             if (i+1)%self.depth_te==0:
                 encoder_skip.append(X_patch)
-                X_patch = DownSampling(X_patch)
+                X_patch = downsampling(X_patch)
                 #print("\t Shape after level " + str((i+1)//self.depth_te) + " of encoding:",X_patch.size())
         # Bottleneck
         #print('Start bottleneck')
@@ -399,14 +399,14 @@ class ViT_UNet(torch.nn.Module):
             #print('\tStep',i+1)
             X_patch = dec(X_patch)
             if (i+1)%self.depth_te==0:
-                X_patch = UpSampling(X_patch)
+                X_patch = upsampling(X_patch)
                 #print("\t Shape after level " + str((i+1)//self.depth_te) + " of decoding:",X_patch.size())
                 #print('\tSkip connection')
                 assert encoder_skip[self.depth-((i+1)//self.depth_te)].shape==X_patch.shape, f"enc and dec not same shape"
                 X_patch = self.SkipConnections[(i-1)//self.depth_te](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
         
         # Output
-        X_restored = Unpatch(Unflatten(X_patch)).reshape(batch_size, ch, h, w)
+        X_restored = unpatch(unflatten(X_patch)).reshape(batch_size, ch, h, w)
         #print('Final processing is: ' + self.preprocessing)
         if self.preprocessing == 'conv':
             X_restored = self.conv2d(X_restored)
