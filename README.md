@@ -3,6 +3,10 @@ ViT-UNet is a novel hierarchical ViT-based model, applied to autoencoders via UN
 * [Deep-ViT](https://arxiv.org/pdf/2103.11886.pdf)
 * [UNet](https://arxiv.org/pdf/1505.04597.pdf)
 
+This Autoencoder structure aims to take advantage of the computational parallelisation of self-attention mechanisms, at the same time that 
+
+![Model architecture illustration](https://github.com/benayas1/vit-unet/blob/main/sample_images/architecture.PNG)
+
 The following tasks are to be tested:
 1. Image denoising.
     * Dataset: [SIDD dataset](https://paperswithcode.com/sota/image-denoising-on-sidd).
