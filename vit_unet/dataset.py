@@ -1,6 +1,7 @@
 import torch
 import pydicom
 import nibabel as nib
+import cv2
 
 class SegmentationDataset(torch.utils.data.Dataset):
     def __init__(self, df, augments=None, is_test=False, data_folder='output', im_size=(128,128), ls=0.0):
@@ -21,7 +22,7 @@ class SegmentationDataset(torch.utils.data.Dataset):
         x = pydicom.read_file(path_image).pixel_array
 
         # Mask
-        nii_img  = nib.load(path_mask)
+        nii_img = nib.load(path_mask)
         nii_data = nii_img.get_fdata()
         mask = nii_data[:,:,mask_index]
         
@@ -35,3 +36,26 @@ class SegmentationDataset(torch.utils.data.Dataset):
         
     def __len__(self):
         return len(self.df)
+
+
+class DenoisingDataset(torch.utils.data.Dataset):
+    def __init__(self, img_names, augments=None, clean_folder='ssid/clean/', noisy_folder='ssid/noisy/'):
+        self.img_names = img_names
+        self.augments = augments
+        self.clean_folder = clean_folder
+        self.noisy_folder = noisy_folder
+        
+    def __getitem__(self, idx):
+        img_clean = cv2.imread(self.clean_folder+self.img_names[idx]+'.png')
+        img_noisy = cv2.imread(self.noisy_folder+self.img_names[idx]+'.png')
+        
+        # Augmentation including scaling
+        if self.augments:
+            augmented = self.augments(image=img_clean, mask=img_noisy)
+            img_clean = augmented['image']
+            img_noisy = augmented['mask']
+            
+        return img_noisy, img_clean
+        
+    def __len__(self):
+        return len(self.img_names)
