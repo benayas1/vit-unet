@@ -9,6 +9,65 @@ This Autoencoder structure aims to take advantage of the computational paralleli
 
 ![Model architecture illustration](https://github.com/benayas1/vit-unet/blob/main/sample_images/architecture.PNG)
 
+
+## Baseline model
+For a given input image of size `(3,224,224)`, three versions of this architecture are suggested:
+
+* Lite: Number of parameters--> 5.385.692
+```
+ViT_UNet(depth = 2,
+         depth_te = 1,
+         size_bottleneck = 2,
+         preprocessing = 'conv',
+         num_patches = 49,
+         patch_size = 16,
+         num_channels = 1,
+         hidden_dim = 128,
+         num_heads = 4,
+         attn_drop = .2,
+         proj_drop = .2,
+         linear_drop = 0,
+         dtype = torch.float32,
+         )
+```
+
+* Base: Number of parameters--> 48.604.546
+```
+ViT_UNet(depth = 2,
+         depth_te = 2,
+         size_bottleneck = 2,
+         preprocessing = 'conv',
+         num_patches = 196,
+         patch_size = 32,
+         num_channels = 3,
+         hidden_dim = 128,
+         num_heads = 8,
+         attn_drop = .2,
+         proj_drop = .2,
+         linear_drop = 0,
+         dtype = torch.float32,
+         )
+```
+
+* Large: Number of parameters--> 114.513.074
+```
+ViT_UNet(depth = 2,
+         depth_te = 6,
+         size_bottleneck = 4,
+         preprocessing = 'conv',
+         num_patches = 196,
+         patch_size = 32,
+         num_channels = 3,
+         hidden_dim = 128,
+         num_heads = 8,
+         attn_drop = .2,
+         proj_drop = .2,
+         linear_drop = 0,
+         dtype = torch.float32,
+         )
+```
+
+
 ## Tasks
 The following tasks are to be tested:
 1. Image denoising.
