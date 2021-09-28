@@ -35,9 +35,9 @@ def unpatch(
     else:
         batch_size, num_patches, ch, h, w = patches.size()
     elem_per_axis = int(np.sqrt(num_patches))
-    patches_middle = torch.cat([patch for patch in patches.reshape(batch_size,elem_per_axis,elem_per_axis,ch,h,w)[0]], dim = -2)
-    restored_image = torch.cat([patch for patch in patches_middle], dim = -1).reshape(batch_size,1,ch,h*elem_per_axis,w*elem_per_axis)
-    return restored_image
+    patches_middle = torch.stack([torch.cat([patch for patch in patches.reshape(batch_size,elem_per_axis,elem_per_axis,ch,h,w)[i]], dim = -2) for i in range(batch_size)], dim = 0)
+    restored_images = torch.cat([patch for patch in patches_middle], dim = -1).reshape(batch_size,1,ch,h*elem_per_axis,w*elem_per_axis)
+    return restored_images
 
 
 # Auxiliary methods to downsampling & upsampling
