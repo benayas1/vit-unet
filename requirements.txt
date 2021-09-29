@@ -5,5 +5,7 @@ fire
 nibabel
 benatools
 scikit-build
+scikit-image
 opencv-contrib-python
 ipykernel
+wandb

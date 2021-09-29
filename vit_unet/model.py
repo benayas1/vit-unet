@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import itertools
 
-
 # Auxiliary functions to create & undo patches
 def patch(X:torch.Tensor,
           patch_size:int,
@@ -282,8 +281,8 @@ class ViT_UNet(torch.nn.Module):
                  num_channels:int,
                  hidden_dim:int,
                  num_heads:int,
-                 attn_drop:int,
-                 proj_drop:int,
+                 attn_drop:float,
+                 proj_drop:float,
                  linear_drop:float,
                  dtype:torch.dtype,
                  ):
@@ -424,3 +423,53 @@ class ViT_UNet(torch.nn.Module):
             X_restored = torch.fft.ifft2(X, norm='ortho').real
 
         return X_restored
+
+def get_vit_unet(model_string: str):
+    if model_string.lower() == 'lite':
+        return ViT_UNet(depth = 2,
+                        depth_te = 1,
+                        size_bottleneck = 2,
+                        preprocessing = 'conv',
+                        num_patches = 196,
+                        patch_size = 16,
+                        num_channels = 3,
+                        hidden_dim = 64,
+                        num_heads = 4,
+                        attn_drop = 0.2,
+                        proj_drop = 0.2,
+                        linear_drop = 0,
+                        dtype = torch.float32,
+                        )
+
+    if model_string.lower() == 'base':
+        return ViT_UNet(depth = 2,
+                        depth_te = 2,
+                        size_bottleneck = 2,
+                        preprocessing = 'conv',
+                        num_patches = 49,
+                        patch_size = 32,
+                        num_channels = 3,
+                        hidden_dim = 128,
+                        num_heads = 8,
+                        attn_drop = .2,
+                        proj_drop = .2,
+                        linear_drop = 0,
+                        dtype = torch.float32,
+                        )
+
+    if model_string.lower() == 'large':
+        return ViT_UNet(depth = 2,
+                        depth_te = 4,
+                        size_bottleneck = 4,
+                        preprocessing = 'conv',
+                        num_patches = 49,
+                        patch_size = 32,
+                        num_channels = 3,
+                        hidden_dim = 128,
+                        num_heads = 8,
+                        attn_drop = .2,
+                        proj_drop = .2,
+                        linear_drop = 0,
+                        dtype = torch.float32,
+                        )
+    raise ValueError(f'Model string {model_string} not valid')
