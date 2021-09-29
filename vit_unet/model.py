@@ -256,9 +256,9 @@ class SkipConnection(torch.nn.Module):
         assert q.shape==k.shape
         assert k.shape==v.shape
         B, N, C = q.shape
-        q = torch.flatten(torch.stack([self.qconv2d(y) for y in Unflatten(q, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
-        k = torch.flatten(torch.stack([self.kconv2d(y) for y in Unflatten(k, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
-        v = torch.flatten(torch.stack([self.vconv2d(y) for y in Unflatten(v, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
+        q = torch.flatten(torch.stack([self.qconv2d(y) for y in unflatten(q, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
+        k = torch.flatten(torch.stack([self.kconv2d(y) for y in unflatten(k, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
+        v = torch.flatten(torch.stack([self.vconv2d(y) for y in unflatten(v, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         attn = (torch.matmul(q,k.transpose(-2, -1))) * self.scale
         attn = torch.nn.functional.softmax(attn, dim = -1)
         attn = self.attn_drop(attn)
