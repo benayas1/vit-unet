@@ -13,16 +13,16 @@ This Autoencoder structure aims to take advantage of the computational paralleli
 ## Baseline model
 For a given input image of size `(3,224,224)`, three versions of this architecture are suggested:
 
-* Lite: Number of parameters--> 5.385.692
+* Lite: Number of parameters--> 3.387.568
 ```
 ViT_UNet(depth = 2,
          depth_te = 1,
          size_bottleneck = 2,
          preprocessing = 'conv',
-         num_patches = 49,
+         num_patches = 196,
          patch_size = 16,
-         num_channels = 1,
-         hidden_dim = 128,
+         num_channels = 3,
+         hidden_dim = 64,
          num_heads = 4,
          attn_drop = .2,
          proj_drop = .2,
@@ -31,13 +31,13 @@ ViT_UNet(depth = 2,
          )
 ```
 
-* Base: Number of parameters--> 48.604.546
+* Base: Number of parameters--> 36.613.036
 ```
 ViT_UNet(depth = 2,
          depth_te = 2,
          size_bottleneck = 2,
          preprocessing = 'conv',
-         num_patches = 196,
+         num_patches = 49,
          patch_size = 32,
          num_channels = 3,
          hidden_dim = 128,
@@ -49,13 +49,13 @@ ViT_UNet(depth = 2,
          )
 ```
 
-* Large: Number of parameters--> 114.513.074
+* Large: Number of parameters--> 63.043.866
 ```
 ViT_UNet(depth = 2,
-         depth_te = 6,
+         depth_te = 4,
          size_bottleneck = 4,
          preprocessing = 'conv',
-         num_patches = 196,
+         num_patches = 49,
          patch_size = 32,
          num_channels = 3,
          hidden_dim = 128,
