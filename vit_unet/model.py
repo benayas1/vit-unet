@@ -299,8 +299,8 @@ class ViT_UNet(torch.nn.Module):
         self.size_bottleneck = size_bottleneck
         self.preprocessing = preprocessing
         self.im_size = im_size
-        self.num_patches = (self.im_size//self.patch_size)**2
         self.patch_size = patch_size
+        self.num_patches = (self.im_size//self.patch_size)**2
         self.num_channels = num_channels
         self.projection_dim = self.num_channels*(self.patch_size)**2
         self.hidden_dim = hidden_dim
