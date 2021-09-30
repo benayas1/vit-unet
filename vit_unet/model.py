@@ -93,7 +93,6 @@ class PatchEncoder(torch.nn.Module):
             X = self.conv2d(X)
         elif self.preprocessing == 'fourier':
             X = torch.fft.fft2(X).real
-        print(self.patch_size_final, X.size())
         patches = patch(X, self.patch_size_final)
         flat_patches = torch.flatten(patches, -3, -1)
         encoded = flat_patches + self.position_embedding(self.positions)

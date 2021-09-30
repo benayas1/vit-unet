@@ -99,4 +99,9 @@ def dice_loss(input:torch.Tensor,
     
     return 1 - ((2. * intersection + smooth) /
               (iflat.sum() + tflat.sum() + smooth))
+
+
+## Usage
+To perform a training:
+>python3 run_denoising.py --model_string "lite" --im_size "224"
 ```
