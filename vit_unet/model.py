@@ -100,6 +100,8 @@ class PatchEncoder(torch.nn.Module):
         encoded = unflatten(encoded, self.num_channels)
         encoded = unpatch(encoded, self.num_channels)
         encoded = torch.flatten(patch(encoded, patch_size = self.patch_size), -3, -1)
+        print('Patch Encoder')
+        torch.cuda.memory_summary('cuda')
         return encoded
 
 
@@ -393,6 +395,8 @@ class ViT_UNet(torch.nn.Module):
 
         # "Preprocessing"
         X_patch = self.PE(X)
+        print('Patch Encoder')
+        torch.cuda.memory_summary('cuda')
 
         # Encoders
         encoder_skip = []
@@ -402,12 +406,18 @@ class ViT_UNet(torch.nn.Module):
             if (i+1)%self.depth_te==0:
                 encoder_skip.append(X_patch)
                 X_patch = downsampling(X_patch, self.num_channels)
+                print(f'Encoder {i}')
+                torch.cuda.memory_summary('cuda')
                 #print("\t Shape after level " + str((i+1)//self.depth_te) + " of encoding:",X_patch.size())
+
         # Bottleneck
         #print('Start bottleneck')
         for i, bottle in enumerate(self.BottleNeck):
             X_patch = bottle(X_patch)
+            print(f'Bottleneck {i}')
+            torch.cuda.memory_summary('cuda')
             #print("\tShape after step " + str(i+1) + " of bottleneck:",X_patch.size())
+
         # Decoders
         #print('Start decoding')
         for i, dec in enumerate(self.Decoders):
@@ -419,7 +429,9 @@ class ViT_UNet(torch.nn.Module):
                 #print('\tSkip connection')
                 assert encoder_skip[self.depth-((i+1)//self.depth_te)].shape==X_patch.shape, f"enc and dec not same shape"
                 X_patch = self.SkipConnections[(i+1)//self.depth_te-1](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
-        
+                print(f'Decoder {i}')
+                torch.cuda.memory_summary('cuda')
+
         # Output
         X_restored = unpatch(unflatten(X_patch, self.num_channels), self.num_channels).reshape(batch_size, self.num_channels, self.im_size, self.im_size)
         #print('Final processing is: ' + self.preprocessing)
@@ -427,6 +439,8 @@ class ViT_UNet(torch.nn.Module):
             X_restored = self.conv2d(X_restored)
         elif self.preprocessing == 'fourier':
             X_restored = torch.fft.ifft2(X, norm='ortho').real
+        print('Final')
+        torch.cuda.memory_summary('cuda')
 
         return X_restored
 
