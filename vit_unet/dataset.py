@@ -42,25 +42,29 @@ class SegmentationDataset(torch.utils.data.Dataset):
 
 
 class DenoisingDataset(torch.utils.data.Dataset):
-    def __init__(self, img_names, augments=None, clean_folder='/ssid/clean/', noisy_folder='/ssid/noisy/'):
+    def __init__(self, img_names, augments=None, clean_folder='/ssid/clean/', noisy_folder='/ssid/noisy/', im_size=224):
         self.img_names = img_names
         self.augments = augments
         self.clean_folder = clean_folder
         self.noisy_folder = noisy_folder
+        self.im_size = im_size
         
     def __getitem__(self, idx):
         img_clean = cv2.imread(os.path.join(self.clean_folder,self.img_names[idx])+'.png')
         img_noisy = cv2.imread(os.path.join(self.noisy_folder,self.img_names[idx])+'.png')
+
+        img_clean = cv2.resize(img_clean, (self.im_size, self.im_size))
+        img_noisy = cv2.resize(img_noisy, (self.im_size, self.im_size))
         
         # Augmentation including scaling
         if self.augments:
-            augmented = self.augments(image=img_clean, mask=img_noisy)
-            img_clean = augmented['image']
-            img_noisy = augmented['mask']
+            augmented = self.augments(image=img_noisy, mask=img_clean)
+            img_noisy = augmented['image']
+            img_clean = augmented['mask']
 
         img_noisy = img_noisy.transpose(2,0,1).astype(np.float)
         img_clean = img_clean.transpose(2,0,1).astype(np.float)
-            
+
         return {'x':img_noisy, 'y':img_clean}
         
     def __len__(self):
