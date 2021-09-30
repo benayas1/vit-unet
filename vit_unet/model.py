@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torchvision
 import itertools
 
 # Auxiliary functions to create & undo patches
@@ -277,7 +278,7 @@ class ViT_UNet(torch.nn.Module):
                  depth_te:int,
                  size_bottleneck:int,
                  preprocessing:str,
-                 num_patches:int,
+                 im_size:int,
                  patch_size:int,
                  num_channels:int,
                  hidden_dim:int,
@@ -291,19 +292,14 @@ class ViT_UNet(torch.nn.Module):
         # Testing
         assert patch_size%(2**(depth))==0, f"Depth must be adjusted, final patch size is incompatible."
         assert patch_size//(2**(depth))>=4, f"Depth must be adjusted, final patch size is too small (lower than 4)."
-        print('Architecture information:')
-        for i in range(depth+1):
-            print('Level {}:'.format(i))
-            print('\tPatch size:',patch_size//(2**i))
-            print('\tNum. patches:',num_patches*(4**i))
-            print('\tProjection size:',(num_channels*patch_size**2)//(4**i))
-            print('\tHidden dim. size:',hidden_dim//(2**i))
+        assert im_size%patch_size==0, f"Patch size is not compatible with image size."
         # Parameters
         self.depth = depth
         self.depth_te = depth_te
         self.size_bottleneck = size_bottleneck
         self.preprocessing = preprocessing
-        self.num_patches = num_patches
+        self.im_size = im_size
+        self.num_patches = (self.im_size//self.patch_size)**2
         self.patch_size = patch_size
         self.num_channels = num_channels
         self.projection_dim = self.num_channels*(self.patch_size)**2
@@ -313,6 +309,14 @@ class ViT_UNet(torch.nn.Module):
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
         self.dtype = dtype
+        # Info
+        print('Architecture information:')
+        for i in range(depth+1):
+            print('Level {}:'.format(i))
+            print('\tPatch size:',self.patch_size//(2**i))
+            print('\tNum. patches:',self.num_patches*(4**i))
+            print('\tProjection size:',(self.num_channels*self.patch_size**2)//(4**i))
+            print('\tHidden dim. size:',self.hidden_dim//(2**i))   
         # Layers
         self.PE = PatchEncoder(self.depth,self.num_patches,self.patch_size,self.num_channels,self.preprocessing,self.dtype)
         self.Encoders = torch.nn.ModuleList()
@@ -384,7 +388,8 @@ class ViT_UNet(torch.nn.Module):
                 X:torch.Tensor,
                 ):
         # Previous validations
-        batch_size, ch, h, w = X.size()
+        X = torchvision.transforms.Resize(self.im_size)(X)
+        batch_size, _, _, _ = X.size()
 
         # "Preprocessing"
         X_patch = self.PE(X)
@@ -416,7 +421,7 @@ class ViT_UNet(torch.nn.Module):
                 X_patch = self.SkipConnections[(i+1)//self.depth_te-1](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
         
         # Output
-        X_restored = unpatch(unflatten(X_patch, self.num_channels), self.num_channels).reshape(batch_size, ch, h, w)
+        X_restored = unpatch(unflatten(X_patch, self.num_channels), self.num_channels).reshape(batch_size, self.num_channels, self.im_size, self.im_size)
         #print('Final processing is: ' + self.preprocessing)
         if self.preprocessing == 'conv':
             X_restored = self.conv2d(X_restored)
@@ -424,6 +429,7 @@ class ViT_UNet(torch.nn.Module):
             X_restored = torch.fft.ifft2(X, norm='ortho').real
 
         return X_restored
+
 
 def get_vit_unet(model_string: str):
     if model_string.lower() == 'lite':
