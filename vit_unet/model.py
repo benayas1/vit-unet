@@ -279,7 +279,7 @@ class ViT_UNet(torch.nn.Module):
                  depth_te:int,
                  size_bottleneck:int,
                  preprocessing:str,
-                 image_size:int,
+                 im_size:int,
                  patch_size:int,
                  num_channels:int,
                  hidden_dim:int,
@@ -293,14 +293,14 @@ class ViT_UNet(torch.nn.Module):
         # Testing
         assert patch_size%(2**(depth))==0, f"Depth must be adjusted, final patch size is incompatible."
         assert patch_size//(2**(depth))>=4, f"Depth must be adjusted, final patch size is too small (lower than 4)."
-        assert image_size%patch_size==0, f"Patch size is not compatible with image size."
+        assert im_size%patch_size==0, f"Patch size is not compatible with image size."
         # Parameters
         self.depth = depth
         self.depth_te = depth_te
         self.size_bottleneck = size_bottleneck
         self.preprocessing = preprocessing
-        self.image_size = image_size
-        self.num_patches = (self.image_size//self.patch_size)**2
+        self.im_size = im_size
+        self.num_patches = (self.im_size//self.patch_size)**2
         self.patch_size = patch_size
         self.num_channels = num_channels
         self.projection_dim = self.num_channels*(self.patch_size)**2
@@ -389,7 +389,7 @@ class ViT_UNet(torch.nn.Module):
                 X:torch.Tensor,
                 ):
         # Previous validations
-        X = torchvision.transforms.Resize(self.image_size)(X)
+        X = torchvision.transforms.Resize(self.im_size)(X)
         batch_size, _, _, _ = X.size()
 
         # "Preprocessing"
@@ -422,7 +422,7 @@ class ViT_UNet(torch.nn.Module):
                 X_patch = self.SkipConnections[(i+1)//self.depth_te-1](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
         
         # Output
-        X_restored = unpatch(unflatten(X_patch, self.num_channels), self.num_channels).reshape(batch_size, self.num_channels, self.image_size, self.image_size)
+        X_restored = unpatch(unflatten(X_patch, self.num_channels), self.num_channels).reshape(batch_size, self.num_channels, self.im_size, self.im_size)
         #print('Final processing is: ' + self.preprocessing)
         if self.preprocessing == 'conv':
             X_restored = self.conv2d(X_restored)
