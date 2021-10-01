@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torchvision
 import itertools
+from functions import softmax_top
 
 # Auxiliary functions to create & undo patches
 def patch(X:torch.Tensor,
@@ -132,16 +133,22 @@ class ReAttention(torch.nn.Module):
                  qk_scale=None,
                  attn_drop=0.,
                  proj_drop=0.,
-                 expansion_ratio = 3,
                  apply_transform=True,
                  transform_scale=False,
+                 softmax_type:str = 'top_k',
+                 top_k:int = 150,
                  ):
         super().__init__()
+        # Parameters
         self.num_heads = num_heads
         self.num_channels = num_channels
         head_dim = dim // num_heads
         self.apply_transform = apply_transform
         self.scale = qk_scale or head_dim ** -0.5
+        self.softmax_type = softmax_type
+        self.top_k = top_k
+
+        # Layers
         if apply_transform:
             self.reatten_matrix = torch.nn.Conv2d(self.num_heads,self.num_heads, 1, 1)
             self.var_norm = torch.nn.BatchNorm2d(self.num_heads)
@@ -157,13 +164,19 @@ class ReAttention(torch.nn.Module):
         self.attn_drop = torch.nn.Dropout(attn_drop)
         self.proj = torch.nn.Linear(dim, dim)
         self.proj_drop = torch.nn.Dropout(proj_drop)
+
     def forward(self, x, atten=None):
         B, N, C = x.shape
         q = torch.flatten(torch.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         k = torch.flatten(torch.stack([self.kconv2d(y) for y in unflatten(x, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         v = torch.flatten(torch.stack([self.vconv2d(y) for y in unflatten(x, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         attn = (torch.matmul(q, k.transpose(-2, -1))) * self.scale
-        attn = torch.nn.functional.softmax(attn, dim = -1)
+        if self.softmax_type=='standard':
+            attn = torch.nn.functional.softmax(attn, dim = -1)
+        elif (self.softmax_type=='top_k') & (self.top_k>attn.shape[-1]):
+            attn = torch.nn.functional.softmax(attn, dim = -1)
+        else:
+            attn = softmax_top(attn, self.top_k)
         attn = self.attn_drop(attn)
         if self.apply_transform:
             attn = self.var_norm(self.reatten_matrix(attn)) * self.reatten_scale
@@ -184,7 +197,9 @@ class ReAttentionTransformerEncoder(torch.nn.Module):
                  attn_drop:int,
                  proj_drop:int,
                  linear_drop:float,
-                 dtype:torch.dtype,
+                 softmax_type:str='top_k',
+                 top_k:int=150,
+                 dtype:torch.dtype=torch.float,
                  ):
         super().__init__()
         self.num_patches = num_patches
@@ -195,12 +210,16 @@ class ReAttentionTransformerEncoder(torch.nn.Module):
         self.attn_drop = attn_drop
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
+        self.softmax_type = softmax_type
+        self.top_k = top_k
         self.dtype = dtype
         self.ReAttn = ReAttention(self.projection_dim,
                                   num_channels = self.num_channels,
                                   num_heads = self.num_heads,
                                   attn_drop = self.attn_drop,
                                   proj_drop = self.proj_drop,
+                                  softmax_type = self.softmax_type,
+                                  top_k = self.top_k,
                                   )
         self.LN = torch.nn.LayerNorm(normalized_shape = (self.num_patches, self.projection_dim),
                                      dtype = self.dtype,
@@ -233,6 +252,8 @@ class SkipConnection(torch.nn.Module):
                  attn_drop=0.,
                  proj_drop=0.,
                  transform_scale=False,
+                 softmax_type:str = 'standard',
+                 top_k:int = 150,
                  ):
         super().__init__()
         self.num_heads = num_heads
@@ -241,6 +262,8 @@ class SkipConnection(torch.nn.Module):
         
         # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
         self.scale = head_dim ** -0.5
+        self.softmax_type = softmax_type
+        self.top_k = top_k
         self.reatten_matrix = torch.nn.Conv2d(self.num_heads,self.num_heads, 1, 1)
         self.var_norm = torch.nn.BatchNorm2d(self.num_heads)
         self.qconv2d = torch.nn.Conv2d(self.num_channels,self.num_channels,3,padding = 'same', bias=qkv_bias)
@@ -261,7 +284,12 @@ class SkipConnection(torch.nn.Module):
         k = torch.flatten(torch.stack([self.kconv2d(y) for y in unflatten(k, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         v = torch.flatten(torch.stack([self.vconv2d(y) for y in unflatten(v, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         attn = (torch.matmul(q,k.transpose(-2, -1))) * self.scale
-        attn = torch.nn.functional.softmax(attn, dim = -1)
+        if self.softmax_type=='standard':
+            attn = torch.nn.functional.softmax(attn, dim = -1)
+        elif (self.softmax_type=='top_k') & (self.top_k>attn.shape[-1]):
+            attn = torch.nn.functional.softmax(attn, dim = -1)
+        else:
+            attn = softmax_top(attn, self.top_k)
         attn = self.attn_drop(attn)
         attn = self.var_norm(self.reatten_matrix(attn)) * self.reatten_scale
 
@@ -286,7 +314,9 @@ class ViT_UNet(torch.nn.Module):
                  attn_drop:float,
                  proj_drop:float,
                  linear_drop:float,
-                 dtype:torch.dtype,
+                 softmax_type:str = 'top_k',
+                 top_k:int=150,
+                 dtype:torch.dtype=torch.float,
                  ):
         super().__init__()
         # Testing
@@ -308,6 +338,8 @@ class ViT_UNet(torch.nn.Module):
         self.attn_drop = attn_drop
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
+        self.softmax_type = softmax_type
+        self.top_k=top_k
         self.dtype = dtype
         # Info
         print('Architecture information:')
@@ -333,6 +365,8 @@ class ViT_UNet(torch.nn.Module):
                                                   self.attn_drop,
                                                   self.proj_drop,
                                                   self.linear_drop,
+                                                  self.softmax_type,
+                                                  self.top_k,
                                                   self.dtype,
                                                   )
                 )
@@ -349,6 +383,8 @@ class ViT_UNet(torch.nn.Module):
                                               self.attn_drop,
                                               self.proj_drop,
                                               self.linear_drop,
+                                              self.softmax_type,
+                                              self.top_k,
                                               self.dtype,
                                               )
             )
@@ -368,6 +404,8 @@ class ViT_UNet(torch.nn.Module):
                                                   self.attn_drop,
                                                   self.proj_drop,
                                                   self.linear_drop,
+                                                  self.softmax_type,
+                                                  self.top_k,
                                                   self.dtype,
                                                   )
                 )
@@ -377,6 +415,8 @@ class ViT_UNet(torch.nn.Module):
                                num_heads = self.num_heads,
                                attn_drop = self.attn_drop,
                                proj_drop = self.proj_drop,
+                               softmax_type = self.softmax_type,
+                               top_k = self.top_k,
                                )
                 )
         
