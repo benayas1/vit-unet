@@ -43,7 +43,7 @@ def downsampling(encoded_patches, num_channels):
     ch, h, w = num_channels, int(np.sqrt(embeddings/num_channels)), int(np.sqrt(embeddings/num_channels))
     original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
     new_patches = patch(original_image, patch_size = h//2)
-    new_patches_flattened = torch.nn.Flatten(start_dim = -3, end_dim = -1).forward(new_patches)
+    new_patches_flattened = torch.flatten(new_patches, start_dim = -3, end_dim = -1)
     return new_patches_flattened
 
 def upsampling(encoded_patches, num_channels):
@@ -51,7 +51,7 @@ def upsampling(encoded_patches, num_channels):
     ch, h, w = num_channels, int(np.sqrt(embeddings/num_channels)), int(np.sqrt(embeddings/num_channels))
     original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
     new_patches = patch(original_image, patch_size = h*2)
-    new_patches_flattened = torch.nn.Flatten(start_dim = -3, end_dim = -1).forward(new_patches)
+    new_patches_flattened = torch.flatten(new_patches,start_dim = -3, end_dim = -1)
     return new_patches_flattened
 
 
