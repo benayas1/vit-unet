@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torchvision
 import itertools
-from functions import softmax_top
+from .functions import softmax_top
 
 # Auxiliary functions to create & undo patches
 def patch(X:torch.Tensor,
