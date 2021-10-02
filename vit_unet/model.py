@@ -228,9 +228,9 @@ class ReAttentionTransformerEncoder(torch.nn.Module):
                                        )
     def forward(self, encoded_patches):
         encoded_patch_attn, _ = self.ReAttn(encoded_patches)
-        encoded_patches += encoded_patch_attn
+        encoded_patches = encoded_patch_attn + encoded_patches
         encoded_patches = self.LN(encoded_patches)
-        encoded_patches += self.FeedForward(encoded_patches)
+        encoded_patches = self.FeedForward(encoded_patches) + encoded_patches
         encoded_patches = self.LN(encoded_patches)
         return encoded_patches
 
