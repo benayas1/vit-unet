@@ -27,7 +27,7 @@ def softmax_top(X:torch.Tensor,
     values, idx = torch.topk(X, top, dim = -1)
     values = torch.nn.functional.softmax(values, dim = -1)
     idx = torch.unsqueeze(idx.flatten(), 0)
-    dct_axis = torch.as_tensor(list(itertools.product(range(batch_size),range(channels),range(shape))))
+    dct_axis = torch.as_tensor(list(itertools.product(range(batch_size),range(channels),range(shape))), device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
     axis = torch.stack([elem.T for elem in dct_axis for _ in range(top)], dim = -1)
     idx = torch.cat([axis,idx], dim = 0)
     Y = torch.sparse.FloatTensor(idx, values.flatten(), X.size()).to_dense()
