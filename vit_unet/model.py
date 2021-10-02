@@ -506,6 +506,7 @@ def get_vit_unet(model_string: str, verbose=False):
                         attn_drop = 0.2,
                         proj_drop = 0.2,
                         linear_drop = 0,
+                        softmax_type = 'standard',
                         dtype = torch.float32,
                         verbose = verbose
                         )
@@ -523,6 +524,7 @@ def get_vit_unet(model_string: str, verbose=False):
                         attn_drop = .2,
                         proj_drop = .2,
                         linear_drop = 0,
+                        softmax_type = 'standard',
                         dtype = torch.float32,
                         verbose = verbose
                         )
@@ -540,6 +542,7 @@ def get_vit_unet(model_string: str, verbose=False):
                         attn_drop = .2,
                         proj_drop = .2,
                         linear_drop = 0,
+                        softmax_type = 'standard',
                         dtype = torch.float32,
                         verbose = verbose
                         )

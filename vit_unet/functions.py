@@ -9,8 +9,8 @@ def psnr(model, dataloader):
     score = []
     with torch.no_grad():
         for batch in dataloader:
-            x = batch['x'].to('cuda')
-            output = model(**x).cpu().numpy()
+            x = batch['x'].to('cuda').float()
+            output = model(x).cpu().numpy()
             y = batch['y'].numpy()
 
             for i in range(len(output)):

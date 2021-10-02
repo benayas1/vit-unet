@@ -62,6 +62,8 @@ class DenoisingDataset(torch.utils.data.Dataset):
             img_noisy = augmented['image']
             img_clean = augmented['mask']
 
+        img_noisy, img_clean = img_noisy/255., img_clean/255.
+
         img_noisy = img_noisy.transpose(2,0,1).astype(np.float)
         img_clean = img_clean.transpose(2,0,1).astype(np.float)
 
