@@ -14,11 +14,8 @@ def patch(X:torch.Tensor,
     assert h%patch_size==0, f"Patch size must divide images height"
     assert w%patch_size==0, f"Patch size must divide images width"
     patches = X.unfold(2, patch_size, patch_size).unfold(3, patch_size, patch_size)
-    patch_list = []
-    for row, col in itertools.product(range(h//patch_size), range(w//patch_size)):
-        patch_list.append(patches[:,:,row,col,:,:])
-    patches = torch.stack(patch_list, dim = 1)
-    return patches
+    patch_list = torch.flatten(patches, 2,3).permute(0,2,1,3,4)
+    return patch_list
 
 def unflatten(flattened, num_channels):
         # Alberto: Added to reconstruct from bs, n, projection_dim -> bs, n, c, h, w
