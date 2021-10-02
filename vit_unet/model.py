@@ -218,7 +218,10 @@ class ReAttentionTransformerEncoder(torch.nn.Module):
                                   softmax_type = self.softmax_type,
                                   top_k = self.top_k,
                                   )
-        self.LN = torch.nn.LayerNorm(normalized_shape = (self.num_patches, self.projection_dim),
+        self.LN1 = torch.nn.LayerNorm(normalized_shape = (self.num_patches, self.projection_dim),
+                                     dtype = self.dtype,
+                                     )
+        self.LN2 = torch.nn.LayerNorm(normalized_shape = (self.num_patches, self.projection_dim),
                                      dtype = self.dtype,
                                      )
         self.FeedForward = FeedForward(projection_dim = self.projection_dim,
@@ -229,9 +232,9 @@ class ReAttentionTransformerEncoder(torch.nn.Module):
     def forward(self, encoded_patches):
         encoded_patch_attn, _ = self.ReAttn(encoded_patches)
         encoded_patches = encoded_patch_attn + encoded_patches
-        encoded_patches = self.LN(encoded_patches)
+        encoded_patches = self.LN1(encoded_patches)
         encoded_patches = self.FeedForward(encoded_patches) + encoded_patches
-        encoded_patches = self.LN(encoded_patches)
+        encoded_patches = self.LN2(encoded_patches)
         return encoded_patches
 
 
