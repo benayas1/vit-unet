@@ -313,7 +313,7 @@ class ViT_UNet(tf.keras.layers.Layer):
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
         # Layers
-        self.PE = PatchEncoder(self.depth,self.num_patches,self.patch_size,self.num_channels,self.preprocessing,self.dtype)
+        self.PE = PatchEncoder(self.depth,self.num_patches,self.patch_size,self.num_channels,self.preprocessing)
         self.Encoders = []
         for level in range(self.depth):
             exp_factor = 4**(level)
@@ -328,7 +328,6 @@ class ViT_UNet(tf.keras.layers.Layer):
                                                   self.attn_drop,
                                                   self.proj_drop,
                                                   self.linear_drop,
-                                                  self.dtype,
                                                   )
                 )
         self.BottleNeck = []
@@ -344,7 +343,6 @@ class ViT_UNet(tf.keras.layers.Layer):
                                               self.attn_drop,
                                               self.proj_drop,
                                               self.linear_drop,
-                                              self.dtype,
                                               )
             )
         self.Decoders = []
@@ -363,7 +361,6 @@ class ViT_UNet(tf.keras.layers.Layer):
                                                   self.attn_drop,
                                                   self.proj_drop,
                                                   self.linear_drop,
-                                                  self.dtype,
                                                   )
                 )
             self.SkipConnections.append(
@@ -415,7 +412,7 @@ class ViT_UNet(tf.keras.layers.Layer):
                 X_patch = self.SkipConnections[(i+1)//self.depth_te-1](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
         
         # Output
-        X_restored = unpatch(unflatten(X_patch, self.num_channels), self.num_channels).reshape(batch_size, ch, h, w)
+        X_restored = tf.reshape(unpatch(unflatten(X_patch, self.num_channels), self.num_channels), [batch_size, h, w, ch])
         print('Final processing is: ' + self.preprocessing)
         if self.preprocessing == 'conv':
             X_restored = self.conv2d(X_restored)
