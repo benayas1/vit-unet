@@ -1,7 +1,7 @@
 import fire
-import vit_unet.model as models
-import vit_unet.functions as fn
-import vit_unet.dataset as dataset
+import vit_unet.torch.model as models
+import vit_unet.torch.functions as fn
+import vit_unet.torch.dataset as dataset
 from glob import glob
 import pandas as pd
 import torch
