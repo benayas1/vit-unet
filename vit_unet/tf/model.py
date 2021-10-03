@@ -51,6 +51,18 @@ def upsampling(encoded_patches, num_channels):
     new_patches_flattened = tf.reshape(new_patches, shape=[new_patches.shape[0], new_patches.shape[1], -1])
     return new_patches_flattened
 
+def create_queries(self, x, letter):
+    if letter=='q':
+        x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+    if letter == 'k':
+        x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+    if letter == 'v':
+        x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+    x = tf.reshape(x, shape=[x.shape[0], x.shape[1], -1])
+    x = tf.reshape(x, shape = [x.shape[0], x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
+    x = tf.transpose(x, perm = [4,0,2,1,3])
+    return x[0]
+
 
 # Patch Encoder
 class PatchEncoder(tf.keras.layers.Layer):
@@ -157,20 +169,6 @@ class ReAttention(tf.keras.layers.Layer):
         self.proj = tf.keras.layers.Dense(dim)
         self.proj_drop = tf.keras.layers.Dropout(proj_drop)
 
-
-    def create_queries(self, x, letter):
-        if letter=='q':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-        if letter == 'k':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-        if letter == 'v':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-        x = tf.reshape(x, shape=[x.shape[0], x.shape[1], -1])
-        x = tf.reshape(x, shape = [x.shape[0], x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
-        x = tf.transpose(x, perm = [4,0,2,1,3])
-        return x[0]
-
-
     def forward(self, x, atten=None):
         B, N, C = x.shape
         q = create_queries(x, 'q')
@@ -259,20 +257,6 @@ class SkipConnection(tf.keras.layers.Layer):
         self.proj = tf.keras.layers.Dense(dim)
         self.proj_drop = tf.keras.layers.Dropout(proj_drop)
         
-
-    def create_queries(self, x, letter):
-        if letter=='q':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-        if letter == 'k':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-        if letter == 'v':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-        x = tf.reshape(x, shape=[x.shape[0], x.shape[1], -1])
-        x = tf.reshape(x, shape = [x.shape[0], x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
-        x = tf.transpose(x, perm = [4,0,2,1,3])
-        return x[0]
-
-
     def forward(self, q,k,v):
         B, N, C = q.shape
         q = create_queries(q, 'q')
