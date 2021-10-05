@@ -2,12 +2,17 @@ import tensorflow as tf
 import numpy as np
 
 # Auxiliary methods
+def get_shape(X:tf.Tensor):
+  return X.shape.as_list()
+
 def patch(X:tf.Tensor,
+          batch_size:int,
           patch_size:int,
+          num_channels:int,
           ):
     if len(X.shape)==5:
         X = tf.squeeze(X, axis=1)
-    batch_size, h, w, channels = tf.shape(X)
+    _, h, w, _ = get_shape(X)
     assert h%patch_size==0, f"Patch size must divide images height"
     assert w%patch_size==0, f"Patch size must divide images width"
     patches_tf = tf.image.extract_patches(X,
@@ -15,39 +20,38 @@ def patch(X:tf.Tensor,
                                           strides = [1, patch_size, patch_size, 1],
                                           rates = [1,1,1,1],
                                           padding = 'VALID')
-    patches_tf = tf.reshape(patches_tf,[batch_size,-1,patch_size,patch_size,3])
+    patches_tf = tf.reshape(patches_tf,[batch_size,-1,patch_size,patch_size,num_channels])
     return patches_tf
 
-def unflatten(flattened, num_channels):
+def unflatten(flattened, batch_size, num_channels):
         # Alberto: Added to reconstruct from bs, n, projection_dim -> bs, n, c, h, w
-        bs, n, p = flattened.shape
-        unflattened = tf.reshape(flattened, (bs, n, int(np.sqrt(p//num_channels)), int(np.sqrt(p//num_channels)), num_channels))
+        _, n, p = get_shape(flattened)
+        unflattened = tf.reshape(flattened, (batch_size, n, int(np.sqrt(p//num_channels)), int(np.sqrt(p//num_channels)), num_channels))
         return unflattened
 
-def unpatch(x, num_channels):
+def unpatch(x, batch_size, num_channels):
     if len(x.shape) < 5:
-        batch_size, num_patches, h, w, ch = unflatten(x, num_channels).shape
+        _, num_patches, h, w, ch = get_shape(unflatten(x, batch_size, num_channels))
     else:
-        batch_size, num_patches, h, w, ch = x.shape
+        _, num_patches, h, w, ch = get_shape(x)
     assert ch==num_channels, f"Num. channels must agree"
     elem_per_axis = int(np.sqrt(num_patches))
-    patches_middle = tf.stack([tf.concat([patch for patch in tf.reshape(x, shape=[batch_size,elem_per_axis,elem_per_axis,h,w,ch])[i]], axis = -3) for i in range(batch_size)], axis = 0)
-    restored_images = tf.reshape(tf.stack([tf.concat([patch for patch in patches_middle[i]], axis = -2) for i in range(batch_size)], axis = 0), shape=[batch_size,1,h*elem_per_axis,w*elem_per_axis,ch])
+    restored_images = tf.reshape(x, shape=[batch_size,1,h*elem_per_axis,w*elem_per_axis,ch])
     return restored_images
 
-def downsampling(encoded_patches, num_channels):
-    _, _, embeddings = encoded_patches.shape
+def downsampling(encoded_patches, batch_size, num_channels):
+    _, _, embeddings = get_shape(encoded_patches)
     h, w, _ = int(np.sqrt(embeddings/num_channels)), int(np.sqrt(embeddings/num_channels)), num_channels
-    original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
-    new_patches = patch(original_image, patch_size = h//2)
+    original_image = unpatch(unflatten(encoded_patches, batch_size, num_channels), batch_size, num_channels)
+    new_patches = patch(original_image, batch_size, patch_size = h//2, num_channels = num_channels)
     new_patches_flattened = tf.reshape(new_patches, shape=[new_patches.shape[0], new_patches.shape[1], -1])
     return new_patches_flattened
 
-def upsampling(encoded_patches, num_channels):
-    _, _, embeddings = encoded_patches.shape
+def upsampling(encoded_patches, batch_size, num_channels):
+    _, _, embeddings = get_shape(encoded_patches)
     h, w, _ = int(np.sqrt(embeddings/num_channels)), int(np.sqrt(embeddings/num_channels)), num_channels
-    original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
-    new_patches = patch(original_image, patch_size = h*2)
+    original_image = unpatch(unflatten(encoded_patches, batch_size, num_channels), batch_size, num_channels)
+    new_patches = patch(original_image, batch_size, patch_size = h*2, num_channels = num_channels)
     new_patches_flattened = tf.reshape(new_patches, shape=[new_patches.shape[0], new_patches.shape[1], -1])
     return new_patches_flattened
 
@@ -56,6 +60,7 @@ def upsampling(encoded_patches, num_channels):
 class PatchEncoder(tf.keras.layers.Layer):
     def __init__(self,
                  depth:int,
+                 batch_size:int,
                  num_patches:int,
                  patch_size:int,
                  num_channels:int,
@@ -64,6 +69,7 @@ class PatchEncoder(tf.keras.layers.Layer):
         super(PatchEncoder, self).__init__()
         # Parameters
         self.depth = depth
+        self.batch_size = batch_size
         self.patch_size = patch_size
         self.num_channels = num_channels
         self.patch_size_final = self.patch_size//(2**self.depth)
@@ -88,13 +94,12 @@ class PatchEncoder(tf.keras.layers.Layer):
             X = self.conv2d(X)
         elif self.preprocessing == 'fourier':
             X = tf.math.real(tf.signal.fft2d(X))
-        patches = patch(X, self.patch_size_final)
-        batch_size, _, _, _, _ = patches.shape
-        flat_patches = tf.reshape(patches, shape = [batch_size, self.num_patches_final,-1])
+        patches = patch(X, self.batch_size, self.patch_size_final, self.num_channels)
+        flat_patches = tf.reshape(patches, shape = [self.batch_size, self.num_patches_final,-1])
         encoded = flat_patches + self.position_embedding(self.positions)
-        encoded = unflatten(encoded, self.num_channels)
-        encoded = unpatch(encoded, self.num_channels)
-        encoded = tf.reshape(patch(encoded, patch_size = self.patch_size), shape = [batch_size, self.num_patches,-1])
+        encoded = unflatten(encoded, self.batch_size, self.num_channels)
+        encoded = unpatch(encoded, self.batch_size, self.num_channels)
+        encoded = tf.reshape(patch(encoded, batch_size = self.batch_size, patch_size = self.patch_size, num_channels = self.num_channels), shape = [self.batch_size, self.num_patches,-1])
         return encoded
 
 
@@ -125,6 +130,7 @@ class FeedForward(tf.keras.layers.Layer):
 class ReAttention(tf.keras.layers.Layer):
     def __init__(self,
                  dim,
+                 batch_size,
                  num_patches,
                  num_channels=3,
                  num_heads=8,
@@ -137,6 +143,7 @@ class ReAttention(tf.keras.layers.Layer):
                  transform_scale=False,
                  ):
         super().__init__()
+        self.batch_size = batch_size
         self.num_heads = num_heads
         self.num_channels = num_channels
         self.num_patches = num_patches
@@ -161,18 +168,22 @@ class ReAttention(tf.keras.layers.Layer):
     
     def create_queries(self, x, letter):
         if letter=='q':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+            x = unflatten(x, self.batch_size, self.num_channels)
+            x = tf.map_fn(fn=lambda y: self.qconv2d(y), elems=x)
         if letter == 'k':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+            x = unflatten(x, self.batch_size, self.num_channels)
+            x = tf.map_fn(fn=lambda y: self.kconv2d(y), elems=x)
         if letter == 'v':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-        x = tf.reshape(x, shape=[x.shape[0], x.shape[1], -1])
-        x = tf.reshape(x, shape = [x.shape[0], x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
+            x = unflatten(x, self.batch_size, self.num_channels)
+            x = tf.map_fn(fn=lambda y: self.vconv2d(y), elems=x)
+
+        x = tf.reshape(x, shape=[self.batch_size, x.shape[1], -1])
+        x = tf.reshape(x, shape = [self.batch_size, x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
         x = tf.transpose(x, perm = [4,0,2,1,3])
         return x[0]
 
     def call(self, x, atten=None):
-        B, N, C = x.shape
+        _, N, C = x.shape
         q = self.create_queries(x, 'q')
         k = self.create_queries(x, 'k')
         v = self.create_queries(x, 'v')
@@ -182,7 +193,7 @@ class ReAttention(tf.keras.layers.Layer):
         if self.apply_transform:
             attn = self.var_norm(self.reatten_matrix(attn)) * self.reatten_scale
         attn_next = attn
-        x = tf.reshape(tf.transpose(tf.linalg.matmul(attn, v), perm = [0,2,1,3]), shape = [B, N, C])
+        x = tf.reshape(tf.transpose(tf.linalg.matmul(attn, v), perm = [0,2,1,3]), shape = [self.batch_size, N, C])
         x = self.proj(x)
         x = self.proj_drop(x)
         return x, attn_next
@@ -190,6 +201,7 @@ class ReAttention(tf.keras.layers.Layer):
 ## Transformer Encoder
 class ReAttentionTransformerEncoder(tf.keras.layers.Layer):
     def __init__(self,
+                 batch_size:int,
                  num_patches:int,
                  num_channels:int,
                  projection_dim:int,
@@ -200,6 +212,7 @@ class ReAttentionTransformerEncoder(tf.keras.layers.Layer):
                  linear_drop:float,
                  ):
         super().__init__()
+        self.batch_size = batch_size
         self.num_patches = num_patches
         self.num_channels = num_channels
         self.projection_dim = projection_dim
@@ -209,6 +222,7 @@ class ReAttentionTransformerEncoder(tf.keras.layers.Layer):
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
         self.ReAttn = ReAttention(self.projection_dim,
+                                  batch_size = self.batch_size,
                                   num_patches = self.num_patches,
                                   num_channels = self.num_channels,
                                   num_heads = self.num_heads,
@@ -238,6 +252,7 @@ class SkipConnection(tf.keras.layers.Layer):
     """
     def __init__(self,
                  dim,
+                 batch_size,
                  num_patches,
                  num_channels=3,
                  num_heads=8,
@@ -247,6 +262,7 @@ class SkipConnection(tf.keras.layers.Layer):
                  transform_scale=False,
                  ):
         super().__init__()
+        self.batch_size = batch_size
         self.num_heads = num_heads
         self.num_channels = num_channels
         self.num_patches = num_patches
@@ -264,13 +280,17 @@ class SkipConnection(tf.keras.layers.Layer):
     
     def create_queries(self, x, letter):
         if letter=='q':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+            x = unflatten(x, self.batch_size, self.num_channels)
+            x = tf.map_fn(fn=lambda y: self.qconv2d(y), elems=x)
         if letter == 'k':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+            x = unflatten(x, self.batch_size, self.num_channels)
+            x = tf.map_fn(fn=lambda y: self.kconv2d(y), elems=x)
         if letter == 'v':
-            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-        x = tf.reshape(x, shape=[x.shape[0], x.shape[1], -1])
-        x = tf.reshape(x, shape = [x.shape[0], x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
+            x = unflatten(x, self.batch_size, self.num_channels)
+            x = tf.map_fn(fn=lambda y: self.vconv2d(y), elems=x)
+
+        x = tf.reshape(x, shape=[self.batch_size, x.shape[1], -1])
+        x = tf.reshape(x, shape = [self.batch_size, x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
         x = tf.transpose(x, perm = [4,0,2,1,3])
         return x[0]
         
@@ -291,6 +311,7 @@ class SkipConnection(tf.keras.layers.Layer):
 # Model
 class ViT_UNet(tf.keras.layers.Layer):
     def __init__(self,
+                 batch_size:int,
                  depth:int,
                  depth_te:int,
                  size_bottleneck:int,
@@ -316,6 +337,7 @@ class ViT_UNet(tf.keras.layers.Layer):
             print('\tProjection size:',(num_channels*patch_size**2)//(4**i))
             print('\tHidden dim. size:',hidden_dim//(2**i))
         # Parameters
+        self.batch_size = batch_size
         self.depth = depth
         self.depth_te = depth_te
         self.size_bottleneck = size_bottleneck
@@ -330,14 +352,15 @@ class ViT_UNet(tf.keras.layers.Layer):
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
         # Layers
-        self.PE = PatchEncoder(self.depth,self.num_patches,self.patch_size,self.num_channels,self.preprocessing)
+        self.PE = PatchEncoder(self.depth,self.batch_size,self.num_patches,self.patch_size,self.num_channels,self.preprocessing)
         self.Encoders = []
         for level in range(self.depth):
             exp_factor = 4**(level)
             exp_factor_hidden = 2**(level)
             for _ in range(depth_te):
                 self.Encoders.append(
-                    ReAttentionTransformerEncoder(self.num_patches*exp_factor,
+                    ReAttentionTransformerEncoder(self.batch_size,
+                                                  self.num_patches*exp_factor,
                                                   self.num_channels*exp_factor,
                                                   self.projection_dim//exp_factor,
                                                   self.hidden_dim//exp_factor_hidden,
@@ -352,7 +375,8 @@ class ViT_UNet(tf.keras.layers.Layer):
             exp_factor = 4**(self.depth)
             exp_factor_hidden = 2**(self.depth)
             self.BottleNeck.append(
-                ReAttentionTransformerEncoder(self.num_patches*exp_factor,
+                ReAttentionTransformerEncoder(self.batch_size,
+                                              self.num_patches*exp_factor,
                                               self.num_channels*exp_factor,
                                               self.projection_dim//exp_factor,
                                               self.hidden_dim//exp_factor_hidden,
@@ -370,7 +394,8 @@ class ViT_UNet(tf.keras.layers.Layer):
             exp_factor_hidden = 2**(self.depth-level)
             for _ in range(depth_te):
                 self.Decoders.append(
-                    ReAttentionTransformerEncoder(self.num_patches*exp_factor,
+                    ReAttentionTransformerEncoder(self.batch_size,
+                                                  self.num_patches*exp_factor,
                                                   self.num_channels,
                                                   self.projection_dim//exp_factor,
                                                   self.hidden_dim//exp_factor_hidden,
@@ -382,6 +407,7 @@ class ViT_UNet(tf.keras.layers.Layer):
                 )
             self.SkipConnections.append(
                 SkipConnection(dim = self.projection_dim//exp_factor_skip,
+                               batch_size = self.batch_size,
                                num_patches = self.num_patches*4**(self.depth-level-1),
                                num_channels = self.num_channels,
                                num_heads = self.num_heads,
@@ -398,7 +424,7 @@ class ViT_UNet(tf.keras.layers.Layer):
                 X:tf.Tensor,
                 ):
         # Previous validations
-        batch_size, h, w, ch = X.shape
+        _, h, w, ch = get_shape(X)
 
         # "Preprocessing"
         X_patch = self.PE(X)
@@ -410,7 +436,7 @@ class ViT_UNet(tf.keras.layers.Layer):
             X_patch = enc(X_patch)
             if (i+1)%self.depth_te==0:
                 encoder_skip.append(X_patch)
-                X_patch = downsampling(X_patch, self.num_channels)
+                X_patch = downsampling(X_patch, self.batch_size, self.num_channels)
                 print("\t Shape after level " + str((i+1)//self.depth_te) + " of encoding:",X_patch.shape)
         # Bottleneck
         print('Start bottleneck')
@@ -423,14 +449,14 @@ class ViT_UNet(tf.keras.layers.Layer):
             print('\tStep',i+1)
             X_patch = dec(X_patch)
             if (i+1)%self.depth_te==0:
-                X_patch = upsampling(X_patch, self.num_channels)
+                X_patch = upsampling(X_patch, self.batch_size, self.num_channels)
                 print("\tShape after level " + str((i+1)//self.depth_te) + " of decoding:",X_patch.shape)
                 print('\tSkip connection')
                 assert encoder_skip[self.depth-((i+1)//self.depth_te)].shape==X_patch.shape, f"enc and dec not same shape"
                 X_patch = self.SkipConnections[(i+1)//self.depth_te-1](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
         
         # Output
-        X_restored = tf.reshape(unpatch(unflatten(X_patch, self.num_channels), self.num_channels), [batch_size, h, w, ch])
+        X_restored = tf.reshape(unpatch(unflatten(X_patch, self.batch_size, self.num_channels), self.batch_size, self.num_channels), [self.batch_size, h, w, ch])
         print('Final processing is: ' + self.preprocessing)
         if self.preprocessing == 'conv':
             X_restored = self.conv2d(X_restored)
