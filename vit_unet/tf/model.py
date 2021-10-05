@@ -36,7 +36,7 @@ def unpatch(x, num_channels):
     return restored_images
 
 def downsampling(encoded_patches, num_channels):
-    _, _, embeddings = encoded_patches.size()
+    _, _, embeddings = encoded_patches.shape
     h, w, _ = int(np.sqrt(embeddings/num_channels)), int(np.sqrt(embeddings/num_channels)), num_channels
     original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
     new_patches = patch(original_image, patch_size = h//2)
@@ -44,7 +44,7 @@ def downsampling(encoded_patches, num_channels):
     return new_patches_flattened
 
 def upsampling(encoded_patches, num_channels):
-    _, _, embeddings = encoded_patches.size()
+    _, _, embeddings = encoded_patches.shape
     h, w, _ = int(np.sqrt(embeddings/num_channels)), int(np.sqrt(embeddings/num_channels)), num_channels
     original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
     new_patches = patch(original_image, patch_size = h*2)
@@ -125,6 +125,7 @@ class FeedForward(tf.keras.layers.Layer):
 class ReAttention(tf.keras.layers.Layer):
     def __init__(self,
                  dim,
+                 num_patches,
                  num_channels=3,
                  num_heads=8,
                  qkv_bias=False,
@@ -138,11 +139,12 @@ class ReAttention(tf.keras.layers.Layer):
         super().__init__()
         self.num_heads = num_heads
         self.num_channels = num_channels
+        self.num_patches = num_patches
         head_dim = dim // num_heads
         self.apply_transform = apply_transform
         self.scale = qk_scale or head_dim ** -0.5
         if apply_transform:
-            self.reatten_matrix = tf.keras.layers.Conv2D(self.num_heads, 1)
+            self.reatten_matrix = tf.keras.layers.Conv2D(self.num_patches, 1)
             self.var_norm = tf.keras.layers.BatchNormalization()
             self.qconv2d = tf.keras.layers.Conv2D(self.num_channels,3,padding = 'same', use_bias=qkv_bias)
             self.kconv2d = tf.keras.layers.Conv2D(self.num_channels,3,padding = 'same', use_bias=qkv_bias)
@@ -174,13 +176,13 @@ class ReAttention(tf.keras.layers.Layer):
         q = self.create_queries(x, 'q')
         k = self.create_queries(x, 'k')
         v = self.create_queries(x, 'v')
-        attn = (tf.linalg.matmul(q,tf.transpose(k, perm = [0,1,3,2]))) * self.scale
+        attn = (tf.linalg.matmul(q, k, transpose_b = True)) * self.scale
         attn = tf.keras.activations.softmax(attn, axis = -1)
         attn = self.attn_drop(attn)
         if self.apply_transform:
             attn = self.var_norm(self.reatten_matrix(attn)) * self.reatten_scale
         attn_next = attn
-        x = tf.transpose(tf.linalg.matmul(attn, v), perm = [0,2,1,3]).reshape(B, N, C)
+        x = tf.reshape(tf.transpose(tf.linalg.matmul(attn, v), perm = [0,2,1,3]), shape = [B, N, C])
         x = self.proj(x)
         x = self.proj_drop(x)
         return x, attn_next
@@ -207,6 +209,7 @@ class ReAttentionTransformerEncoder(tf.keras.layers.Layer):
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
         self.ReAttn = ReAttention(self.projection_dim,
+                                  num_patches = self.num_patches,
                                   num_channels = self.num_channels,
                                   num_heads = self.num_heads,
                                   attn_drop = self.attn_drop,
@@ -235,6 +238,7 @@ class SkipConnection(tf.keras.layers.Layer):
     """
     def __init__(self,
                  dim,
+                 num_patches,
                  num_channels=3,
                  num_heads=8,
                  qkv_bias=False,
@@ -245,9 +249,10 @@ class SkipConnection(tf.keras.layers.Layer):
         super().__init__()
         self.num_heads = num_heads
         self.num_channels = num_channels
+        self.num_patches = num_patches
         head_dim = dim // num_heads
         self.scale = head_dim ** -0.5
-        self.reatten_matrix = tf.keras.layers.Conv2D(self.num_heads, 1)
+        self.reatten_matrix = tf.keras.layers.Conv2D(self.num_patches, 1)
         self.var_norm = tf.keras.layers.BatchNormalization()
         self.qconv2d = tf.keras.layers.Conv2D(self.num_channels,3,padding = 'same', use_bias=qkv_bias)
         self.kconv2d = tf.keras.layers.Conv2D(self.num_channels,3,padding = 'same', use_bias=qkv_bias)
@@ -278,7 +283,7 @@ class SkipConnection(tf.keras.layers.Layer):
         attn = tf.keras.activations.softmax(attn, axis = -1)
         attn = self.attn_drop(attn)
         attn = self.var_norm(self.reatten_matrix(attn)) * self.reatten_scale
-        x = tf.transpose(tf.linalg.matmul(attn, v), perm = [0,2,1,3]).reshape(B, N, C)
+        x = tf.reshape(tf.transpose(tf.linalg.matmul(attn, v), perm = [0,2,1,3]), shape = [B, N, C])
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -333,7 +338,7 @@ class ViT_UNet(tf.keras.layers.Layer):
             for _ in range(depth_te):
                 self.Encoders.append(
                     ReAttentionTransformerEncoder(self.num_patches*exp_factor,
-                                                  self.num_channels,
+                                                  self.num_channels*exp_factor,
                                                   self.projection_dim//exp_factor,
                                                   self.hidden_dim//exp_factor_hidden,
                                                   self.num_heads,
@@ -348,7 +353,7 @@ class ViT_UNet(tf.keras.layers.Layer):
             exp_factor_hidden = 2**(self.depth)
             self.BottleNeck.append(
                 ReAttentionTransformerEncoder(self.num_patches*exp_factor,
-                                              self.num_channels,
+                                              self.num_channels*exp_factor,
                                               self.projection_dim//exp_factor,
                                               self.hidden_dim//exp_factor_hidden,
                                               self.num_heads,
@@ -377,6 +382,7 @@ class ViT_UNet(tf.keras.layers.Layer):
                 )
             self.SkipConnections.append(
                 SkipConnection(dim = self.projection_dim//exp_factor_skip,
+                               num_patches = self.num_patches*4**(self.depth-level-1),
                                num_channels = self.num_channels,
                                num_heads = self.num_heads,
                                attn_drop = self.attn_drop,
@@ -392,25 +398,25 @@ class ViT_UNet(tf.keras.layers.Layer):
                 X:tf.Tensor,
                 ):
         # Previous validations
-        batch_size, h, w, ch = X.size()
+        batch_size, h, w, ch = X.shape
 
         # "Preprocessing"
         X_patch = self.PE(X)
 
         # Encoders
         encoder_skip = []
-        print('Start encoding. Original shape:',X_patch.size())
+        print('Start encoding. Original shape:',X_patch.shape)
         for i, enc in enumerate(self.Encoders):
             X_patch = enc(X_patch)
             if (i+1)%self.depth_te==0:
                 encoder_skip.append(X_patch)
                 X_patch = downsampling(X_patch, self.num_channels)
-                print("\t Shape after level " + str((i+1)//self.depth_te) + " of encoding:",X_patch.size())
+                print("\t Shape after level " + str((i+1)//self.depth_te) + " of encoding:",X_patch.shape)
         # Bottleneck
         print('Start bottleneck')
         for i, bottle in enumerate(self.BottleNeck):
             X_patch = bottle(X_patch)
-            print("\tShape after step " + str(i+1) + " of bottleneck:",X_patch.size())
+            print("\tShape after step " + str(i+1) + " of bottleneck:",X_patch.shape)
         # Decoders
         print('Start decoding')
         for i, dec in enumerate(self.Decoders):
@@ -418,7 +424,7 @@ class ViT_UNet(tf.keras.layers.Layer):
             X_patch = dec(X_patch)
             if (i+1)%self.depth_te==0:
                 X_patch = upsampling(X_patch, self.num_channels)
-                print("\tShape after level " + str((i+1)//self.depth_te) + " of decoding:",X_patch.size())
+                print("\tShape after level " + str((i+1)//self.depth_te) + " of decoding:",X_patch.shape)
                 print('\tSkip connection')
                 assert encoder_skip[self.depth-((i+1)//self.depth_te)].shape==X_patch.shape, f"enc and dec not same shape"
                 X_patch = self.SkipConnections[(i+1)//self.depth_te-1](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
