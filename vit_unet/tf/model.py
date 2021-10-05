@@ -51,18 +51,6 @@ def upsampling(encoded_patches, num_channels):
     new_patches_flattened = tf.reshape(new_patches, shape=[new_patches.shape[0], new_patches.shape[1], -1])
     return new_patches_flattened
 
-def create_queries(self, x, letter):
-    if letter=='q':
-        x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-    if letter == 'k':
-        x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-    if letter == 'v':
-        x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
-    x = tf.reshape(x, shape=[x.shape[0], x.shape[1], -1])
-    x = tf.reshape(x, shape = [x.shape[0], x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
-    x = tf.transpose(x, perm = [4,0,2,1,3])
-    return x[0]
-
 
 # Patch Encoder
 class PatchEncoder(tf.keras.layers.Layer):
@@ -125,7 +113,7 @@ class FeedForward(tf.keras.layers.Layer):
         self.D2 = tf.keras.layers.Dense(projection_dim)
         self.Drop2 = tf.keras.layers.Dropout(dropout)
 
-    def forward(self, x):
+    def call(self, x):
         x = self.D1(x)
         x = tf.keras.activations.gelu(x)
         x = self.Drop1(x)
@@ -168,12 +156,24 @@ class ReAttention(tf.keras.layers.Layer):
         self.attn_drop = tf.keras.layers.Dropout(attn_drop)
         self.proj = tf.keras.layers.Dense(dim)
         self.proj_drop = tf.keras.layers.Dropout(proj_drop)
+    
+    def create_queries(self, x, letter):
+        if letter=='q':
+            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+        if letter == 'k':
+            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+        if letter == 'v':
+            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+        x = tf.reshape(x, shape=[x.shape[0], x.shape[1], -1])
+        x = tf.reshape(x, shape = [x.shape[0], x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
+        x = tf.transpose(x, perm = [4,0,2,1,3])
+        return x[0]
 
-    def forward(self, x, atten=None):
+    def call(self, x, atten=None):
         B, N, C = x.shape
-        q = create_queries(x, 'q')
-        k = create_queries(x, 'k')
-        v = create_queries(x, 'v')
+        q = self.create_queries(x, 'q')
+        k = self.create_queries(x, 'k')
+        v = self.create_queries(x, 'v')
         attn = (tf.linalg.matmul(q,tf.transpose(k, perm = [0,1,3,2]))) * self.scale
         attn = tf.keras.activations.softmax(attn, axis = -1)
         attn = self.attn_drop(attn)
@@ -218,7 +218,7 @@ class ReAttentionTransformerEncoder(tf.keras.layers.Layer):
                                        hidden_dim = self.hidden_dim,
                                        dropout = self.linear_drop,
                                        )
-    def forward(self, encoded_patches):
+    def call(self, encoded_patches):
         encoded_patch_attn, _ = self.ReAttn(encoded_patches)
         encoded_patches = encoded_patch_attn + encoded_patches
         encoded_patches = self.LN1(encoded_patches)
@@ -256,12 +256,24 @@ class SkipConnection(tf.keras.layers.Layer):
         self.attn_drop = tf.keras.layers.Dropout(attn_drop)
         self.proj = tf.keras.layers.Dense(dim)
         self.proj_drop = tf.keras.layers.Dropout(proj_drop)
+    
+    def create_queries(self, x, letter):
+        if letter=='q':
+            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+        if letter == 'k':
+            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+        if letter == 'v':
+            x = tf.stack([self.qconv2d(y) for y in unflatten(x, self.num_channels)], axis = 0)
+        x = tf.reshape(x, shape=[x.shape[0], x.shape[1], -1])
+        x = tf.reshape(x, shape = [x.shape[0], x.shape[1], self.num_heads, x.shape[2]//self.num_heads, 1])
+        x = tf.transpose(x, perm = [4,0,2,1,3])
+        return x[0]
         
-    def forward(self, q,k,v):
+    def call(self, q,k,v):
         B, N, C = q.shape
-        q = create_queries(q, 'q')
-        k = create_queries(k, 'k')
-        v = create_queries(v, 'v')
+        q = self.create_queries(q, 'q')
+        k = self.create_queries(k, 'k')
+        v = self.create_queries(v, 'v')
         attn = (tf.linalg.matmul(q,tf.transpose(k, perm = [0,1,3,2]))) * self.scale
         attn = tf.keras.activations.softmax(attn, axis = -1)
         attn = self.attn_drop(attn)
@@ -376,7 +388,7 @@ class ViT_UNet(tf.keras.layers.Layer):
         if self.preprocessing == 'conv':
             self.conv2d = tf.keras.layers.Conv2D(self.num_channels, kernel_size = 3, padding = 'same')
     
-    def forward(self,
+    def call(self,
                 X:tf.Tensor,
                 ):
         # Previous validations
