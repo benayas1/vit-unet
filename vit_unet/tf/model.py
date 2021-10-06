@@ -10,24 +10,31 @@ def patch(X:tf.Tensor,
           patch_size:int,
           num_channels:int,
           ):
+
+    def patches_2d(X:tf.Tensor):
+        h, w = get_shape(X)
+        X_middle = tf.stack(tf.split(X,h//patch_size, axis = 0), axis = 0)
+        X_final = tf.map_fn(fn=lambda y: tf.stack(tf.split(y,w//patch_size, axis = 1), axis = 0), elems = X_middle)
+        X_final = tf.reshape(X_final, shape=[-1,patch_size,patch_size])
+        return X_final
+
     if len(X.shape)==5:
         X = tf.squeeze(X, axis=1)
-    _, h, w, _ = get_shape(X)
+    _, h, w, _ = X.shape.as_list()
     assert h%patch_size==0, f"Patch size must divide images height"
     assert w%patch_size==0, f"Patch size must divide images width"
-    patches_tf = tf.image.extract_patches(X,
-                                          sizes = [1, patch_size, patch_size, 1],
-                                          strides = [1, patch_size, patch_size, 1],
-                                          rates = [1,1,1,1],
-                                          padding = 'VALID')
-    patches_tf = tf.reshape(patches_tf,[batch_size,-1,patch_size,patch_size,num_channels])
+    X = tf.transpose(X, perm=[0,3,1,2])
+    patches_tf = tf.map_fn(fn=lambda y: tf.map_fn(fn = lambda z: patches_2d(z), elems = y),
+                           elems = X,
+                           )
+    patches_tf = tf.transpose(patches_tf, [0,2,3,4,1])
     return patches_tf
 
 def unflatten(flattened, batch_size, num_channels):
-        # Alberto: Added to reconstruct from bs, n, projection_dim -> bs, n, c, h, w
-        _, n, p = get_shape(flattened)
-        unflattened = tf.reshape(flattened, (batch_size, n, int(np.sqrt(p//num_channels)), int(np.sqrt(p//num_channels)), num_channels))
-        return unflattened
+    # Alberto: Added to reconstruct from bs, n, projection_dim -> bs, n, c, h, w
+    _, n, p = get_shape(flattened)
+    unflattened = tf.reshape(flattened, (batch_size, n, int(np.sqrt(p//num_channels)), int(np.sqrt(p//num_channels)), num_channels))
+    return unflattened
 
 def unpatch(x, batch_size, num_channels):
     if len(x.shape) < 5:
@@ -36,7 +43,9 @@ def unpatch(x, batch_size, num_channels):
         _, num_patches, h, w, ch = get_shape(x)
     assert ch==num_channels, f"Num. channels must agree"
     elem_per_axis = int(np.sqrt(num_patches))
-    restored_images = tf.reshape(x, shape=[batch_size,1,h*elem_per_axis,w*elem_per_axis,ch])
+    x = tf.stack(tf.split(Patches_tf, elem_per_axis, axis = 1), axis = 1)
+    patches_middle = tf.stack([tf.concat(tf.unstack(x, axis = 1), axis = -3) for i in range(batch_size)], axis = 0)
+    restored_images = tf.reshape(tf.stack([tf.concat(tf.unstack(patches_middle, axis = 2), axis = -2) for i in range(batch_size)], axis = 0), shape=[batch_size,1,h*elem_per_axis,w*elem_per_axis,ch])
     return restored_images
 
 def downsampling(encoded_patches, batch_size, num_channels):
@@ -96,7 +105,7 @@ class PatchEncoder(tf.keras.layers.Layer):
             X = tf.math.real(tf.signal.fft2d(X))
         patches = patch(X, self.batch_size, self.patch_size_final, self.num_channels)
         flat_patches = tf.reshape(patches, shape = [self.batch_size, self.num_patches_final,-1])
-        encoded = flat_patches + self.position_embedding(self.positions)
+        encoded = tf.map_fn(fn=lambda y: y + self.position_embedding(self.positions), elems = flat_patches)
         encoded = unflatten(encoded, self.batch_size, self.num_channels)
         encoded = unpatch(encoded, self.batch_size, self.num_channels)
         encoded = tf.reshape(patch(encoded, batch_size = self.batch_size, patch_size = self.patch_size, num_channels = self.num_channels), shape = [self.batch_size, self.num_patches,-1])
