@@ -44,8 +44,8 @@ def unpatch(x, batch_size, num_channels):
     assert ch==num_channels, f"Num. channels must agree"
     elem_per_axis = int(np.sqrt(num_patches))
     x = tf.stack(tf.split(x, elem_per_axis, axis = 1), axis = 1)
-    patches_middle = tf.stack([tf.concat(tf.unstack(x, axis = 1), axis = -3) for i in range(batch_size)], axis = 0)
-    restored_images = tf.reshape(tf.stack([tf.concat(tf.unstack(patches_middle, axis = 2), axis = -2) for i in range(batch_size)], axis = 0), shape=[batch_size,1,h*elem_per_axis,w*elem_per_axis,ch])
+    patches_middle = tf.concat(tf.unstack(x, axis = 2), axis = -2)
+    restored_images = tf.reshape(tf.concat(tf.unstack(patches_middle, axis = 1), axis = -3), shape=[batch_size,1,h*elem_per_axis,w*elem_per_axis,ch])
     return restored_images
 
 def downsampling(encoded_patches, batch_size, num_channels):
