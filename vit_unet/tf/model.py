@@ -6,9 +6,7 @@ def get_shape(X:tf.Tensor):
   return X.shape.as_list()
 
 def patch(X:tf.Tensor,
-          batch_size:int,
           patch_size:int,
-          num_channels:int,
           ):
 
     def patches_2d(X:tf.Tensor):
@@ -30,37 +28,37 @@ def patch(X:tf.Tensor,
     patches_tf = tf.transpose(patches_tf, [0,2,3,4,1])
     return patches_tf
 
-def unflatten(flattened, batch_size, num_channels):
+def unflatten(flattened, num_channels):
     # Alberto: Added to reconstruct from bs, n, projection_dim -> bs, n, c, h, w
     _, n, p = get_shape(flattened)
-    unflattened = tf.reshape(flattened, (batch_size, n, int(np.sqrt(p//num_channels)), int(np.sqrt(p//num_channels)), num_channels))
+    unflattened = tf.reshape(flattened, (-1, n, int(np.sqrt(p//num_channels)), int(np.sqrt(p//num_channels)), num_channels))
     return unflattened
 
-def unpatch(x, batch_size, num_channels):
+def unpatch(x, num_channels):
     if len(x.shape) < 5:
-        _, num_patches, h, w, ch = get_shape(unflatten(x, batch_size, num_channels))
+        _, num_patches, h, w, ch = get_shape(unflatten(x, num_channels))
     else:
         _, num_patches, h, w, ch = get_shape(x)
     assert ch==num_channels, f"Num. channels must agree"
     elem_per_axis = int(np.sqrt(num_patches))
     x = tf.stack(tf.split(x, elem_per_axis, axis = 1), axis = 1)
     patches_middle = tf.concat(tf.unstack(x, axis = 2), axis = -2)
-    restored_images = tf.reshape(tf.concat(tf.unstack(patches_middle, axis = 1), axis = -3), shape=[batch_size,1,h*elem_per_axis,w*elem_per_axis,ch])
+    restored_images = tf.reshape(tf.concat(tf.unstack(patches_middle, axis = 1), axis = -3), shape=[-1,1,h*elem_per_axis,w*elem_per_axis,ch])
     return restored_images
 
-def downsampling(encoded_patches, batch_size, num_channels):
+def downsampling(encoded_patches, num_channels):
     _, _, embeddings = get_shape(encoded_patches)
     h, w, _ = int(np.sqrt(embeddings/num_channels)), int(np.sqrt(embeddings/num_channels)), num_channels
-    original_image = unpatch(unflatten(encoded_patches, batch_size, num_channels), batch_size, num_channels)
-    new_patches = patch(original_image, batch_size, patch_size = h//2, num_channels = num_channels)
+    original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
+    new_patches = patch(original_image, patch_size = h//2)
     new_patches_flattened = tf.reshape(new_patches, shape=[new_patches.shape[0], new_patches.shape[1], -1])
     return new_patches_flattened
 
-def upsampling(encoded_patches, batch_size, num_channels):
+def upsampling(encoded_patches, num_channels):
     _, _, embeddings = get_shape(encoded_patches)
     h, w, _ = int(np.sqrt(embeddings/num_channels)), int(np.sqrt(embeddings/num_channels)), num_channels
-    original_image = unpatch(unflatten(encoded_patches, batch_size, num_channels), batch_size, num_channels)
-    new_patches = patch(original_image, batch_size, patch_size = h*2, num_channels = num_channels)
+    original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
+    new_patches = patch(original_image, patch_size = h*2)
     new_patches_flattened = tf.reshape(new_patches, shape=[new_patches.shape[0], new_patches.shape[1], -1])
     return new_patches_flattened
 
@@ -103,12 +101,12 @@ class PatchEncoder(tf.keras.layers.Layer):
             X = self.conv2d(X)
         elif self.preprocessing == 'fourier':
             X = tf.math.real(tf.signal.fft2d(X))
-        patches = patch(X, self.batch_size, self.patch_size_final, self.num_channels)
+        patches = patch(X, self.patch_size_final)
         flat_patches = tf.reshape(patches, shape = [self.batch_size, self.num_patches_final,-1])
         encoded = tf.map_fn(fn=lambda y: y + self.position_embedding(self.positions), elems = flat_patches)
-        encoded = unflatten(encoded, self.batch_size, self.num_channels)
-        encoded = unpatch(encoded, self.batch_size, self.num_channels)
-        encoded = tf.reshape(patch(encoded, batch_size = self.batch_size, patch_size = self.patch_size, num_channels = self.num_channels), shape = [self.batch_size, self.num_patches,-1])
+        encoded = unflatten(encoded, self.num_channels)
+        encoded = unpatch(encoded, self.num_channels)
+        encoded = tf.reshape(patch(encoded, patch_size = self.patch_size), shape = [self.batch_size, self.num_patches,-1])
         return encoded
 
 
@@ -445,7 +443,7 @@ class ViT_UNet(tf.keras.layers.Layer):
             X_patch = enc(X_patch)
             if (i+1)%self.depth_te==0:
                 encoder_skip.append(X_patch)
-                X_patch = downsampling(X_patch, self.batch_size, self.num_channels)
+                X_patch = downsampling(X_patch, self.num_channels)
                 print("\t Shape after level " + str((i+1)//self.depth_te) + " of encoding:",X_patch.shape)
         # Bottleneck
         print('Start bottleneck')
@@ -458,14 +456,14 @@ class ViT_UNet(tf.keras.layers.Layer):
             print('\tStep',i+1)
             X_patch = dec(X_patch)
             if (i+1)%self.depth_te==0:
-                X_patch = upsampling(X_patch, self.batch_size, self.num_channels)
+                X_patch = upsampling(X_patch, self.num_channels)
                 print("\tShape after level " + str((i+1)//self.depth_te) + " of decoding:",X_patch.shape)
                 print('\tSkip connection')
                 assert encoder_skip[self.depth-((i+1)//self.depth_te)].shape==X_patch.shape, f"enc and dec not same shape"
                 X_patch = self.SkipConnections[(i+1)//self.depth_te-1](encoder_skip[self.depth-((i+1)//self.depth_te)], X_patch, X_patch)
         
         # Output
-        X_restored = tf.reshape(unpatch(unflatten(X_patch, self.batch_size, self.num_channels), self.batch_size, self.num_channels), [self.batch_size, h, w, ch])
+        X_restored = tf.reshape(unpatch(unflatten(X_patch, self.num_channels), self.num_channels), [-1, h, w, ch])
         print('Final processing is: ' + self.preprocessing)
         if self.preprocessing == 'conv':
             X_restored = self.conv2d(X_restored)
