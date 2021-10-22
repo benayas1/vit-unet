@@ -48,7 +48,8 @@ def unpatch(x, num_channels):
 
 def resampling(encoded_patches, img_size:int=128, patch_size:List[int]=[16,8], num_channels:int=3):
     num_patch = (img_size//patch_size[1])**2
-    proj_dim = num_channels*patch_size[1]**2
+    ratio = (patch_size[1]/patch_size[0])**2
+    proj_dim = int(encoded_patches.shape.as_list()[-1]*ratio)
     original_image = unpatch(unflatten(encoded_patches, num_channels), num_channels)
     new_patches = patches(tf.squeeze(original_image, axis=1), patch_size[1])
     new_patches_flattened = tf.reshape(new_patches, shape=[-1, num_patch, proj_dim])
@@ -61,12 +62,12 @@ class Resampling(tf.keras.layers.Layer):
                  img_size:int=128,
                  patch_size:List[int]=[8,16],
                  num_channels:int=1,
-                 projection_dim:int=None,
-                 resampling_type:str='standard',
+                 projection_dim:int=256,
+                 resampling_type:str='cnn',
                  ):
         super(Resampling, self).__init__()
         # Validation
-        assert resampling_type in ['max', 'avg', 'standard'], f"Resampling type must be either 'max', 'avg' or 'standard'."
+        assert resampling_type in ['max', 'avg', 'standard', 'conv'], f"Resampling type must be either 'max', 'avg' or 'standard'."
         # Parameters
         self.img_size = img_size
         self.patch_size = patch_size
@@ -80,10 +81,19 @@ class Resampling(tf.keras.layers.Layer):
             self.projection_dim = projection_dim
             self.positions = tf.range(start=0, limit=self.num_patches[-1], delta=1)
             self.position_embedding = tf.keras.layers.Embedding(input_dim=self.num_patches[-1], output_dim=self.projection_dim)
-        else:
-            self.projection_dim = [self.num_channels*patch**2 for patch in self.patch_size]
+        elif self.resampling_type=='standard':
+            self.projection_dim = [projection_dim if projection_dim is not None else self.num_channels*patch**2 for patch in self.patch_size]
             self.positions = tf.range(start=0, limit=self.num_patches[-1], delta=1)
             self.position_embedding = tf.keras.layers.Embedding(input_dim=self.num_patches[-1], output_dim=self.projection_dim[-1])
+            self.linear = tf.keras.layers.Dense(self.projection_dim[-1])
+        elif self.resampling_type=='conv':
+            assert (projection_dim is None) or (int(np.sqrt(projection_dim//self.num_channels))==np.sqrt(projection_dim//self.num_channels)), f"If provided, projection dim has to be a perfect square (per channel) with resampling_type=='conv'."
+            self.projection_dim = [projection_dim if projection_dim is not None else self.num_channels*patch**2 for patch in self.patch_size]
+            self.conv = tf.keras.layers.Conv2D(self.num_patches[-1], self.pool_size//2, strides = self.pool_size//2, padding = 'same')
+            self.linear = tf.keras.layers.Dense(self.projection_dim[-1])
+            self.positions = tf.range(start=0, limit=self.num_patches[-1], delta=1)
+            self.position_embedding = tf.keras.layers.Embedding(input_dim=self.num_patches[-1], output_dim=self.projection_dim[-1])
+
 
     def call(self, encoded:tf.Tensor):
         if self.resampling_type=='max':
@@ -99,10 +109,10 @@ class Resampling(tf.keras.layers.Layer):
             return encoded
         elif self.resampling_type=='avg':
             # Merge patches "horizontally"
-            encoded = tf.keras.layers.MaxPool1D(pool_size = self.pool_size//2, strides = self.pool_size//2, padding = "same")(encoded)
+            encoded = tf.keras.layers.AveragePooling1D(pool_size = self.pool_size//2, strides = self.pool_size//2, padding = "same")(encoded)
             # Merge patches "vertically"
             encoded = tf.transpose(tf.reshape(encoded, [-1,self.num_patches[1], self.pool_size//2, self.projection_dim]), perm=[0,2,1,3])
-            encoded = tf.map_fn(lambda y:tf.keras.layers.MaxPool1D(pool_size = self.pool_size//2, strides = self.pool_size//2, padding = "same")(y), elems = encoded)
+            encoded = tf.map_fn(lambda y:tf.keras.layers.AveragePooling1D(pool_size = self.pool_size//2, strides = self.pool_size//2, padding = "same")(y), elems = encoded)
             encoded = tf.transpose(encoded, perm=[0,2,1,3])
             # Undo & PE
             encoded = tf.concat(tf.unstack(encoded, axis = 2), axis = -2)
@@ -110,7 +120,15 @@ class Resampling(tf.keras.layers.Layer):
             return encoded
         elif self.resampling_type=='standard':
             encoded = resampling(encoded, self.img_size, self.patch_size, self.num_channels)
-            encoded = encoded + self.position_embedding(self.positions)
+            encoded = self.linear(encoded) + self.position_embedding(self.positions)
+            return encoded
+        elif self.resampling_type=='conv':
+            encoded = unflatten(encoded, self.num_channels)
+            encoded = tf.transpose(encoded, [0,4,2,3,1])
+            encoded = tf.map_fn(lambda y: self.conv(y), elems = encoded)
+            encoded = tf.transpose(encoded, [0,4,2,3,1])
+            encoded = tf.reshape(encoded, [-1, self.num_patches[-1], self.projection_dim[0]//4])
+            encoded = self.linear(encoded) + self.position_embedding(self.positions)
             return encoded
 
 ## Patch Encoder
