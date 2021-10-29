@@ -56,26 +56,20 @@ def upsampling(encoded_patches, num_channels):
 # Class PatchEncoder, to include initial and positional encoding
 class PatchEncoder(torch.nn.Module):
     def __init__(self,
-                 depth:int,
-                 num_patches:int,
+                 img_size:int,
                  patch_size:int,
                  num_channels:int,
-                 preprocessing:str,
-                 dtype:torch.dtype,
+                 projection_dim:int=None,
                  ):
         super(PatchEncoder, self).__init__()
         # Parameters
-        self.depth = depth
+        self.img_size = img_size
         self.patch_size = patch_size
         self.num_channels = num_channels
-        self.patch_size_final = self.patch_size//(2**self.depth)
-        self.num_patches = num_patches
-        self.num_patches_final = self.num_patches*(4**self.depth)
-        assert preprocessing in ['conv', 'fourier', 'none'], f"Preprocessing can only be 'conv', 'fourier' or 'none'."
-        self.preprocessing = preprocessing
-        self.dtype = dtype
+        self.projection_dim = projection_dim if projection_dim is not None else self.num_channels*self.patch_size**2
+        self.num_patches = (self.img_size//self.patch_size)**2
         self.positions = torch.arange(start = 0,
-                         end = self.num_patches_final,
+                         end = self.num_patches,
                          step = 1,
                          device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
                          )
@@ -83,16 +77,12 @@ class PatchEncoder(torch.nn.Module):
         # Layers
         if self.preprocessing == "conv":
             self.conv2d = torch.nn.Conv2d(self.num_channels, self.num_channels, 3, padding = 'same')
-        self.position_embedding = torch.nn.Embedding(num_embeddings=self.num_patches_final,
-                                                     embedding_dim = self.num_channels*self.patch_size_final**2,
+        self.position_embedding = torch.nn.Embedding(num_embeddings=self.num_patches,
+                                                     embedding_dim = self.projection_dim,
                                                      )
 
     def forward(self, X):
-        if self.preprocessing == 'conv':
-            X = self.conv2d(X)
-        elif self.preprocessing == 'fourier':
-            X = torch.fft.fft2(X).real
-        patches = patch(X, self.patch_size_final)
+        patches = patch(X, self.patch_size)
         flat_patches = torch.flatten(patches, -3, -1)
         encoded = flat_patches + self.position_embedding(self.positions)
         encoded = unflatten(encoded, self.num_channels)
@@ -107,14 +97,13 @@ class FeedForward(torch.nn.Module):
                  projection_dim:int,
                  hidden_dim:int,
                  dropout:float,
-                 dtype:torch.dtype,
                  ):
         super().__init__()
         self.net = torch.nn.Sequential(
-            torch.nn.Linear(projection_dim, hidden_dim, dtype = dtype),
+            torch.nn.Linear(projection_dim, hidden_dim),
             torch.nn.GELU(),
             torch.nn.Dropout(dropout),
-            torch.nn.Linear(hidden_dim, projection_dim, dtype = dtype),
+            torch.nn.Linear(hidden_dim, projection_dim),
             torch.nn.Dropout(dropout),
         )
     def forward(self, x):
@@ -132,8 +121,6 @@ class ReAttention(torch.nn.Module):
                  proj_drop=0.,
                  apply_transform=True,
                  transform_scale=False,
-                 softmax_type:str = 'top_k',
-                 top_k:int = 150,
                  ):
         super().__init__()
         # Parameters
@@ -142,8 +129,6 @@ class ReAttention(torch.nn.Module):
         head_dim = dim // num_heads
         self.apply_transform = apply_transform
         self.scale = qk_scale or head_dim ** -0.5
-        self.softmax_type = softmax_type
-        self.top_k = top_k
 
         # Layers
         if apply_transform:
@@ -168,12 +153,7 @@ class ReAttention(torch.nn.Module):
         k = torch.flatten(torch.stack([self.kconv2d(y) for y in unflatten(x, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         v = torch.flatten(torch.stack([self.vconv2d(y) for y in unflatten(x, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         attn = (torch.matmul(q, k.transpose(-2, -1))) * self.scale
-        if self.softmax_type=='standard':
-            attn = torch.nn.functional.softmax(attn, dim = -1)
-        elif (self.softmax_type=='top_k') & (self.top_k>attn.shape[-1]):
-            attn = torch.nn.functional.softmax(attn, dim = -1)
-        else:
-            attn = softmax_top(attn, self.top_k)
+        attn = torch.nn.functional.softmax(attn, dim = -1)
         attn = self.attn_drop(attn)
         if self.apply_transform:
             attn = self.var_norm(self.reatten_matrix(attn)) * self.reatten_scale
@@ -194,9 +174,6 @@ class ReAttentionTransformerEncoder(torch.nn.Module):
                  attn_drop:int,
                  proj_drop:int,
                  linear_drop:float,
-                 softmax_type:str='top_k',
-                 top_k:int=150,
-                 dtype:torch.dtype=torch.float,
                  ):
         super().__init__()
         self.num_patches = num_patches
@@ -207,27 +184,19 @@ class ReAttentionTransformerEncoder(torch.nn.Module):
         self.attn_drop = attn_drop
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
-        self.softmax_type = softmax_type
-        self.top_k = top_k
-        self.dtype = dtype
         self.ReAttn = ReAttention(self.projection_dim,
                                   num_channels = self.num_channels,
                                   num_heads = self.num_heads,
                                   attn_drop = self.attn_drop,
                                   proj_drop = self.proj_drop,
-                                  softmax_type = self.softmax_type,
-                                  top_k = self.top_k,
                                   )
         self.LN1 = torch.nn.LayerNorm(normalized_shape = (self.num_patches, self.projection_dim),
-                                     dtype = self.dtype,
                                      )
         self.LN2 = torch.nn.LayerNorm(normalized_shape = (self.num_patches, self.projection_dim),
-                                     dtype = self.dtype,
                                      )
         self.FeedForward = FeedForward(projection_dim = self.projection_dim,
                                        hidden_dim = self.hidden_dim,
                                        dropout = self.linear_drop,
-                                       dtype = self.dtype,
                                        )
     def forward(self, encoded_patches):
         encoded_patch_attn, _ = self.ReAttn(encoded_patches)
@@ -252,8 +221,6 @@ class SkipConnection(torch.nn.Module):
                  attn_drop=0.,
                  proj_drop=0.,
                  transform_scale=False,
-                 softmax_type:str = 'standard',
-                 top_k:int = 150,
                  ):
         super().__init__()
         self.num_heads = num_heads
@@ -262,8 +229,6 @@ class SkipConnection(torch.nn.Module):
         
         # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
         self.scale = head_dim ** -0.5
-        self.softmax_type = softmax_type
-        self.top_k = top_k
         self.reatten_matrix = torch.nn.Conv2d(self.num_heads,self.num_heads, 1, 1)
         self.var_norm = torch.nn.BatchNorm2d(self.num_heads)
         self.qconv2d = torch.nn.Conv2d(self.num_channels,self.num_channels,3,padding = 'same', bias=qkv_bias)
@@ -284,12 +249,7 @@ class SkipConnection(torch.nn.Module):
         k = torch.flatten(torch.stack([self.kconv2d(y) for y in unflatten(k, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         v = torch.flatten(torch.stack([self.vconv2d(y) for y in unflatten(v, self.num_channels)], dim = 0), -3,-1).reshape(B, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)[0]
         attn = (torch.matmul(q,k.transpose(-2, -1))) * self.scale
-        if self.softmax_type=='standard':
-            attn = torch.nn.functional.softmax(attn, dim = -1)
-        elif (self.softmax_type=='top_k') & (self.top_k>attn.shape[-1]):
-            attn = torch.nn.functional.softmax(attn, dim = -1)
-        else:
-            attn = softmax_top(attn, self.top_k)
+        attn = torch.nn.functional.softmax(attn, dim = -1)
         attn = self.attn_drop(attn)
         attn = self.var_norm(self.reatten_matrix(attn)) * self.reatten_scale
 
@@ -300,7 +260,7 @@ class SkipConnection(torch.nn.Module):
 
 
 # Model architecture
-class ViT_UNet(torch.nn.Module):
+class HViT_UNet(torch.nn.Module):
     def __init__(self,
                  depth:int,
                  depth_te:int,
@@ -314,9 +274,6 @@ class ViT_UNet(torch.nn.Module):
                  attn_drop:float,
                  proj_drop:float,
                  linear_drop:float,
-                 softmax_type:str = 'top_k',
-                 top_k:int=150,
-                 dtype:torch.dtype=torch.float,
                  verbose:bool=False
                  ):
         super().__init__()
@@ -339,9 +296,6 @@ class ViT_UNet(torch.nn.Module):
         self.attn_drop = attn_drop
         self.proj_drop = proj_drop
         self.linear_drop = linear_drop
-        self.softmax_type = softmax_type
-        self.top_k=top_k
-        self.dtype = dtype
         self.verbose = verbose
         # Info
         print('Architecture information:')
@@ -367,9 +321,6 @@ class ViT_UNet(torch.nn.Module):
                                                   self.attn_drop,
                                                   self.proj_drop,
                                                   self.linear_drop,
-                                                  self.softmax_type,
-                                                  self.top_k,
-                                                  self.dtype,
                                                   )
                 )
         self.BottleNeck = torch.nn.ModuleList()
@@ -385,9 +336,6 @@ class ViT_UNet(torch.nn.Module):
                                               self.attn_drop,
                                               self.proj_drop,
                                               self.linear_drop,
-                                              self.softmax_type,
-                                              self.top_k,
-                                              self.dtype,
                                               )
             )
         self.Decoders = torch.nn.ModuleList()
@@ -406,9 +354,6 @@ class ViT_UNet(torch.nn.Module):
                                                   self.attn_drop,
                                                   self.proj_drop,
                                                   self.linear_drop,
-                                                  self.softmax_type,
-                                                  self.top_k,
-                                                  self.dtype,
                                                   )
                 )
             self.SkipConnections.append(
@@ -417,8 +362,6 @@ class ViT_UNet(torch.nn.Module):
                                num_heads = self.num_heads,
                                attn_drop = self.attn_drop,
                                proj_drop = self.proj_drop,
-                               softmax_type = self.softmax_type,
-                               top_k = self.top_k,
                                )
                 )
         
@@ -494,7 +437,7 @@ class ViT_UNet(torch.nn.Module):
 
 def get_vit_unet(model_string: str, verbose=False):
     if model_string.lower() == 'lite':
-        return ViT_UNet(depth = 2,
+        return HViT_UNet(depth = 2,
                         depth_te = 1,
                         size_bottleneck = 2,
                         preprocessing = 'conv',
@@ -506,13 +449,11 @@ def get_vit_unet(model_string: str, verbose=False):
                         attn_drop = 0.2,
                         proj_drop = 0.2,
                         linear_drop = 0,
-                        softmax_type = 'standard',
-                        dtype = torch.float32,
                         verbose = verbose
                         )
 
     if model_string.lower() == 'base':
-        return ViT_UNet(depth = 2,
+        return HViT_UNet(depth = 2,
                         depth_te = 2,
                         size_bottleneck = 2,
                         preprocessing = 'conv',
@@ -524,13 +465,11 @@ def get_vit_unet(model_string: str, verbose=False):
                         attn_drop = .2,
                         proj_drop = .2,
                         linear_drop = 0,
-                        softmax_type = 'standard',
-                        dtype = torch.float32,
                         verbose = verbose
                         )
 
     if model_string.lower() == 'large':
-        return ViT_UNet(depth = 2,
+        return HViT_UNet(depth = 2,
                         depth_te = 4,
                         size_bottleneck = 4,
                         preprocessing = 'conv',
@@ -542,8 +481,6 @@ def get_vit_unet(model_string: str, verbose=False):
                         attn_drop = .2,
                         proj_drop = .2,
                         linear_drop = 0,
-                        softmax_type = 'standard',
-                        dtype = torch.float32,
                         verbose = verbose
                         )
     raise ValueError(f'Model string {model_string} not valid')
